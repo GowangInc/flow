@@ -1,4 +1,4 @@
-// REVISION: flow-v58-no-pixels
+// REVISION: flow-v86-flat-side
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -9,6 +9,18 @@ import { hasNight, nextStyle, STYLES, styleNamed, type SceneName } from './style
 export type FlowMode = 'auto' | 'manual'
 /** `band` above the prompt, or `spine`: a tall pane docked beside the transcript. */
 export type FlowLayout = 'band' | 'spine'
+
+/** The words for each layout: its name, and others it answers to. */
+const LAYOUTS: ReadonlyMap<string, FlowLayout> = new Map([
+  ['band', 'band'],
+  ['horizontal', 'band'],
+  ['bar', 'band'],
+  ['flat', 'band'],
+  ['spine', 'spine'],
+  ['portrait', 'spine'],
+  ['vertical', 'spine'],
+  ['side', 'spine'],
+])
 /** Day or night for the scenes that have both: by the local `clock`, or pinned. */
 export type FlowTime = 'clock' | 'day' | 'night'
 export type FlowConfig = {
@@ -99,7 +111,8 @@ export function parseFlowArgs(args: string): FlowCommand {
   }
   if (a === 'layout') {
     if (b === undefined) return { kind: 'layout' }
-    if (b === 'band' || b === 'spine') return { kind: 'layout', layout: b }
+    const layout = LAYOUTS.get(b)
+    if (layout) return { kind: 'layout', layout }
     return { kind: 'error', text: '! `/flow band` (above the prompt) or `/flow spine` (a tall side pane)' }
   }
   // `style <name>`, from before scenes were picked by name alone.
@@ -115,7 +128,8 @@ export function parseFlowArgs(args: string): FlowCommand {
   if (a === 'help' || a === 'list' || a === '?') return { kind: 'help' }
   if (a === 'auto' || a === 'on') return { kind: 'auto' }
   if (a === 'next' || a === 'style') return { kind: 'style' }
-  if (a === 'band' || a === 'spine') return { kind: 'layout', layout: a }
+  const layout = LAYOUTS.get(a)
+  if (layout) return { kind: 'layout', layout }
   const time = TIMES.get(a)
   if (time) return { kind: 'time', time }
   if (a === 'off') return { kind: 'manual', level: 0 }
@@ -177,7 +191,10 @@ export function helpText(agent = "Claude's", panes = true): string {
     '  /flow 1-10 | off      hold a level (10 is the busiest), or switch it off',
     '  /flow idle glow|dark  in auto mode while idle: a low glow, or nothing',
   ]
-  if (panes) lines.push('  /flow band | spine    above the prompt, or a tall pane beside the transcript')
+  if (panes) {
+    lines.push('  /flow band | spine    above the prompt, or a tall pane beside the transcript')
+    lines.push('                        (also horizontal, bar or flat; portrait, vertical or side)')
+  }
   return lines.join('\n')
 }
 

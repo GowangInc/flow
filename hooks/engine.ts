@@ -1,4 +1,4 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v85-stronger-top
 //
 // Engine (the `engine` style): a Victorian steam engine room on the same dials
 // as the fire; the level is how hard it is being driven. At 1 it stands cold,
@@ -29,12 +29,13 @@
 // firebox to a blue gas flame, the steam and gauges blue-white, and blinks a
 // blue lamp on the boiler.
 
-import { Cells, DEFAULT_COLOR, Rng } from './cells'
+import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
 import type { Tint } from './styles'
 import { BRAILLE, clamp01, dist, mix, QUAD } from './pixels'
+import { defineScene } from './scene-def'
 
 /** Crank radians per frame at each level (0 = off, 1 = cold and still). */
-const SPEED = [0, 0, 0.035, 0.07, 0.11, 0.15, 0.2, 0.26, 0.32, 0.39, 0.46]
+const SPEED = [0, 0, 0.035, 0.07, 0.11, 0.15, 0.2, 0.27, 0.36, 0.47, 0.6]
 const MAX_SPEED = SPEED[10]!
 const SPOKES = 6
 /** The line shaft turns this many times per crank turn. */
@@ -271,7 +272,7 @@ export class Engine {
   private layout(): void {
     const wd = this.columns * 2
     const hd = this.rows * 4
-    this.vertical = this.rows > this.columns
+    this.vertical = isTall(this.columns, this.rows)
     this.gears = []
     this.pulleys = []
     this.belts = []
@@ -650,13 +651,14 @@ export class Engine {
       this.lastHalf = half
       if (this.omega > 0.012 && level > 0 && !(smoke && this.rng.f() < 0.35)) this.chuff(level)
     }
-    const extra = Math.max(0, level - 5) * 0.12 + this.coverageBoost * 0.004
+    // Above 5 the chimney pours more and more between chuffs, steeply toward 10.
+    const extra = Math.pow(Math.max(0, level - 5), 1.4) * 0.1 + this.coverageBoost * 0.004
     if (level >= 2 && this.rng.f() < extra) this.puff(this.chimX, this.chimY, 0.35 + this.rng.f() * 0.25, 1.2, level)
     // A failed command: the fire smoulders and the chimney pours soot, even cold.
     if (smoke && level > 0 && this.rng.f() < 0.3) this.puff(this.chimX, this.chimY, 0.75 + this.rng.f() * 0.3, 1.5 + level * 0.08, Math.max(2, level))
     // Cold, the safety valve lets a faint wisp go now and then.
     if (level > 0 && level <= 3 && this.rng.f() < (level === 1 ? 0.06 : 0.03)) this.wisp(this.valveX, this.valveY)
-    if (level >= 8 && this.rng.f() < (level - 7) * 0.12 && !smoke) this.chimneySpark(level)
+    if (level >= 7 && this.rng.f() < (level - 6) * 0.15 && !smoke) this.chimneySpark(level)
     // Smokestacks and leaky valves.
     for (let i = 1; i < this.emitters.length; i++) {
       const e = this.emitters[i]!
@@ -1624,3 +1626,10 @@ export class Engine {
     return this.grid().encode()
   }
 }
+
+export const engineScene = defineScene({
+  name: 'engine',
+  aliases: ['mechanism'],
+  blurb: 'a steampunk engine that runs up to full speed',
+  make: seed => new Engine(seed),
+})

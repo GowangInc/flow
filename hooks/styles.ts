@@ -1,7 +1,8 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v82-aliases
 //
 // The scenes, all driven by the same dials (strength 0..10, coverage boost,
-// tint, night), and the fire itself (`Ember`, the `fire` scene): the ░▒▓█
+// tint, night): SCENES, the one list of them (each scene file exports its
+// SceneDef; add yours there), and the fire itself (`Ember`, the `fire` scene): the ░▒▓█
 // Doom-style automaton of fire.ts for its shape, glyphs and crisp flicker,
 // colored half its 256-color ramp, half a smooth truecolor black-body eased
 // over time, with sparks breaking off the tips and cooling into smoke.
@@ -12,32 +13,16 @@ import { Cells, Rng } from './cells'
 export type { Cells }
 import { heatColor, smokeColor } from './fire-palette'
 import { BRAILLE, mix } from './pixels'
-import { Balloon } from './balloon'
-import { Colony } from './colony'
-import { Engine } from './engine'
-import { Ski } from './ski'
-import { Surf } from './surf'
-import { Falcon, Starship } from './rocket'
-import { Starfield } from './starfield'
-import { Bubbles } from './bubbles'
-import { Lava } from './lava'
-import { River } from './river'
+import { defineScene, type SceneDef } from './scene-def'
+import { balloonScene } from './balloon'
+import { avalonScene } from './colony'
+import { engineScene } from './engine'
+import { skiScene } from './ski'
+import { surfScene } from './surf'
+import { falconScene, starshipScene } from './rocket'
+import { warpScene } from './starfield'
+import { bubblesScene } from './bubbles'
 
-export const STYLES = [
-  'fire',
-  'warp',
-  'colony',
-  'balloon',
-  'engine',
-  'falcon',
-  'starship',
-  'surf',
-  'ski',
-  'river',
-  'bubbles',
-  'lava',
-] as const
-export type SceneName = (typeof STYLES)[number]
 
 /** What shows over a scene: smoke after a failure or a compaction, blue when the context is nearly full. */
 export type Tint = 'normal' | 'smoke' | 'blue'
@@ -57,56 +42,38 @@ export interface Scene {
   frame(): string
 }
 
-export function makeScene(style: SceneName, seed?: number): Scene {
-  switch (style) {
-    case 'fire':
-      return new Ember(seed)
-    case 'warp':
-      return new Starfield(seed)
-    case 'colony':
-      return new Colony(seed)
-    case 'balloon':
-      return new Balloon(seed)
-    case 'engine':
-      return new Engine(seed)
-    case 'falcon':
-      return new Falcon(seed)
-    case 'starship':
-      return new Starship(seed)
-    case 'surf':
-      return new Surf(seed)
-    case 'ski':
-      return new Ski(seed)
-    case 'river':
-      return new River(seed)
-    case 'bubbles':
-      return new Bubbles(seed)
-    case 'lava':
-      return new Lava(seed)
-  }
+function defOf(style: SceneName): SceneDef {
+  return SCENES.find(d => d.name === style)!
 }
 
-/** The scenes with a night as well as a day. */
-const NIGHT_STYLES: ReadonlySet<SceneName> = new Set(['balloon', 'falcon', 'starship', 'surf', 'ski', 'river', 'bubbles'])
+export function makeScene(style: SceneName, seed?: number): Scene {
+  return defOf(style).make(seed)
+}
 
+/** Whether a scene has a night as well as a day. */
 export function hasNight(style: SceneName): boolean {
-  return NIGHT_STYLES.has(style)
+  return defOf(style).night === true
 }
 
 export function nextStyle(style: SceneName): SceneName {
   return STYLES[(STYLES.indexOf(style) + 1) % STYLES.length]!
 }
 
-function isStyle(s: string): s is SceneName {
-  return (STYLES as readonly string[]).includes(s)
-}
-
 /** A style by name, old names included (`starfield` is now `warp`). Day or night is never part of the name. */
 export function styleNamed(s: string): SceneName | undefined {
-  if (s === 'starfield') return 'warp'
-  // The fire had two looks once; the softer one, `ember`, is now the fire.
-  if (s === 'classic' || s === 'ember') return 'fire'
-  return isStyle(s) ? s : undefined
+  return SCENES.find(d => d.name === s || d.aliases?.includes(s))?.name
+}
+
+/** plugin.json's `style` description: every scene and its blurb (a test keeps the manifest in step). */
+export function styleDescription(): string {
+  return SCENES.map(d => `${d.name}: ${d.blurb}`).join('; ')
+}
+
+/** plugin.json's `time` description: which scenes have a night. */
+export function timeDescription(): string {
+  const night = SCENES.filter(d => d.night).map(d => d.name)
+  const list = night.length > 1 ? `${night.slice(0, -1).join(', ')} and ${night.at(-1)}` : night.join('')
+  return `For ${list}: clock follows your local time (night from 19:00 to 7:00); day or night pins it`
 }
 
 type Spark = { x: number; y: number; vy: number; heat: number; cool: number; phase: number }
@@ -279,3 +246,30 @@ class Ember implements Scene {
     return out
   }
 }
+
+const fireScene = defineScene({
+  name: 'fire',
+  blurb: 'a ░▒▓█ fire with sparks and smoke',
+  // The fire had two looks once; the softer one, `ember`, is now the fire.
+  aliases: ['classic', 'ember', 'inferno', 'flame'],
+  make: seed => new Ember(seed),
+})
+
+/**
+ * Every scene, in `/flow next` order. To add one: export a SceneDef from its
+ * file (`npm run new-scene <name>` writes one) and list it here.
+ */
+export const SCENES = [
+  fireScene,
+  warpScene,
+  avalonScene,
+  balloonScene,
+  engineScene,
+  falconScene,
+  starshipScene,
+  surfScene,
+  skiScene,
+  bubblesScene,
+] as const
+export type SceneName = (typeof SCENES)[number]['name']
+export const STYLES: readonly SceneName[] = SCENES.map(d => d.name)

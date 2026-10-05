@@ -1,2 +1,5 @@
 # Written by the Claude Code engine on each load
 .claude-plugin/types/
+
+# npm install (the scene scripts)
+node_modules/

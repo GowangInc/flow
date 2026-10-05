@@ -1,4 +1,4 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v82-aliases
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -21,10 +21,11 @@
 // a grey overcast sky; a nearly-full context turns the sea storm-blue and
 // raises a red warning flag.
 
-import { Cells, Rng } from './cells'
+import { Cells, Rng, isTall } from './cells'
 import type { Tint } from './styles'
 import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
 import { BRAILLE, clamp, fitQuad, g, hash1 as hash, mix, QUAD, type QuadFit } from './pixels'
+import { defineScene } from './scene-def'
 
 /** Pixels of water texture that stream past per frame at each level. */
 const SPEED = [0, 0.05, 0.12, 0.22, 0.34, 0.48, 0.64, 0.82, 1.02, 1.26, 1.55]
@@ -262,7 +263,7 @@ export class Surf {
     this.columns = columns
     this.rows = rows
     this.out = new Cells(columns, rows)
-    this.vertical = rows > columns
+    this.vertical = isTall(columns, rows)
     this.pw = columns * 2
     this.ph = rows * 2
     const n = this.pw * this.ph
@@ -1003,3 +1004,11 @@ export class Surf {
     return this.grid().encode()
   }
 }
+
+export const surfScene = defineScene({
+  name: 'surf',
+  aliases: ['ocean', 'sea'],
+  blurb: 'a surfer and the swell',
+  night: true,
+  make: seed => new Surf(seed),
+})

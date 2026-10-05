@@ -1,10 +1,12 @@
-// REVISION: flow-v65-panes-optional
+// REVISION: flow-v102-review-fixes
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
 // band above the prompt (5 rows) or in a tall pane docked beside the
 // transcript (the spine), and repainted with `$.ui.blit`: ~14 fps while busy,
 // 8 fps when calm, not at all while off screen or a frame comes out unchanged.
+// Claude desktop has no Raster: there each frame is drawn as one `Svg` holding
+// the scene as a small image (svg.ts), redrawn up to 10 times a second.
 //
 // Auto mode (the default) moves with the work Claude is doing: idle it sits
 // at a low glow (or dark); a turn lifts it by effort, streamed output keeps
@@ -36,9 +38,10 @@ import {
   type FlowConfig,
 } from './settings'
 import { styleNamed } from './styles'
+import { frameSvg } from './svg'
 
 
-const FLOW_REVISION = 'flow-v65-panes-optional'
+const FLOW_REVISION = 'flow-v102-review-fixes'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -51,6 +54,13 @@ const AGENT_IDLE_POLL_MS = 5000 // otherwise: subagents can run on after a turn,
 /** A blit unanswered for this many ticks is presumed lost, not in flight. */
 const BLIT_STALE_TICKS = 15
 const MAX_ROWS = 5
+/** A desktop site redraws at most 10 times a second (`$.ui.invalidate`'s limit there). */
+const DESKTOP_MS = 100
+/** A desktop site that hasn't rendered for this many ticks (about 3 s) is gone. */
+const DESKTOP_STALE_TICKS = 45
+/** A desktop cell in CSS pixels (its text's column and line), to size the frame's image. */
+const DESKTOP_CELL_W = 8
+const DESKTOP_CELL_H = 19
 /** The spine: a pane docked beside the fullscreen transcript, floor to ceiling. */
 const SPINE = 'flow'
 /** The width the spine asks for; the dock seats it no narrower than its minimum. */
@@ -89,7 +99,9 @@ function validOverrides(raw: unknown): Partial<FlowConfig> {
   const full = readConfig(o)
   const out: Partial<FlowConfig> = {}
   for (const k of Object.keys(full) as (keyof FlowConfig)[]) {
-    if (o[k] !== undefined && storedValue(k, full[k]) === o[k]) (out as Record<string, unknown>)[k] = full[k]
+    // A scene under an old name (`colony`, now `avalon`) is still that scene.
+    const same = k === 'style' && typeof o[k] === 'string' && styleNamed(o[k] as string) === full[k]
+    if (o[k] !== undefined && (same || storedValue(k, full[k]) === o[k])) (out as Record<string, unknown>)[k] = full[k]
   }
   return out
 }
@@ -208,6 +220,12 @@ export const register: Register = (on, options) => {
   const activity = new Activity()
   const driver = new SceneDriver(readConfig(options), activity)
   const cfg = driver.cfg
+  /**
+   * Desktop's own scenes, on the same settings: a session open in the
+   * terminal and on desktop at once draws each at its own size, and resizing
+   * one shared scene back and forth every frame would rebuild it every frame.
+   */
+  const desktopDriver = new SceneDriver(cfg, activity)
   /** Where the scene is drawn now (band or spine). Other surfaces never touch it. */
   let mounted: { requestId: string; columns: number; rows: number } | null = null
   let ticks = 0
@@ -216,6 +234,30 @@ export const register: Register = (on, options) => {
   /** The tick a blit went out on, -1 when none is in flight. */
   let blitAt = -1
   let lastCells = ''
+  /**
+   * The desktop sites drawing the scene (band, spine), their size in cells
+   * and the tick each last rendered: the newest steps it. A desktop window
+   * closing sends nothing, so a site that stops rendering though it's asked
+   * to every frame is forgotten (it comes back if it renders again).
+   */
+  const desktopSites = new Map<string, { columns: number; rows: number; at: number }>()
+  const desktopSite = () => {
+    for (const [id, site] of desktopSites) if (ticks - site.at > DESKTOP_STALE_TICKS) desktopSites.delete(id)
+    return [...desktopSites.values()].at(-1)
+  }
+  /** A desktop site's frame: the scene at its size, as one Svg sized to its cells. */
+  const desktopSvg = (requestId: string, columns: number, rows: number) => {
+    desktopSites.delete(requestId) // re-added last: the newest site steps the scene
+    desktopSites.set(requestId, { columns, rows, at: ticks })
+    const scene = desktopDriver.dial()
+    scene.ensure(columns, rows)
+    return {
+      source: frameSvg(scene.grid()),
+      alt: `flow: ${cfg.style}`,
+      width: columns * DESKTOP_CELL_W,
+      height: rows * DESKTOP_CELL_H,
+    }
+  }
 
   /** Apply a change here at once and redraw from scratch (the caller invalidates). */
   const applyLocal = (changes: Partial<FlowConfig>) => {
@@ -224,7 +266,7 @@ export const register: Register = (on, options) => {
   }
   const setClock = (ms: number) => {
     const d = new Date(ms)
-    driver.clock = { hour: d.getHours(), minute: d.getMinutes() }
+    driver.clock = desktopDriver.clock = { hour: d.getHours(), minute: d.getMinutes() }
   }
 
   on('session.start', async ($, e, next) => {
@@ -265,8 +307,11 @@ export const register: Register = (on, options) => {
     }
 
     // Resume the balloon where the last load left it.
-    const balloon = driver.sceneFor('balloon')
-    if (balloon instanceof Balloon) balloon.seed(await savedAltitude($))
+    const altitude = await savedAltitude($)
+    for (const d of [driver, desktopDriver]) {
+      const balloon = d.sceneFor('balloon')
+      if (balloon instanceof Balloon) balloon.seed(altitude)
+    }
 
     // The frame loop: its own pace, rescheduled each tick.
     let wasShown = driver.isShown()
@@ -274,9 +319,11 @@ export const register: Register = (on, options) => {
     const frame = (elapsed: number): number => {
       ticks++
       activity.tick(elapsed / FRAME_MS)
+      const site = mounted
+      const desk = desktopSite()
       // Every second or so, note the balloon's altitude if it moved, so a
       // /config change made from the menu (a reload) resumes it too.
-      const b = driver.sceneFor('balloon')
+      const b = (site || !desk ? driver : desktopDriver).sceneFor('balloon')
       if (ticks % 15 === 0 && b instanceof Balloon && Math.abs(b.altitude - keptAltitude) > 0.5) {
         keptAltitude = b.altitude
         void keepAltitude($, b.altitude)
@@ -288,7 +335,14 @@ export const register: Register = (on, options) => {
         wasShown = shown
         $.ui.invalidate('ui.render')
       }
-      const site = mounted
+      if (desk) {
+        // Desktop steps its own scene here and redraws its Svg.
+        const scene = desktopDriver.dial()
+        scene.ensure(desk.columns, desk.rows)
+        scene.step()
+        $.ui.invalidate('ui.render')
+        if (!site) return Math.max(DESKTOP_MS, desktopDriver.pace())
+      }
       if (!site) return HIDDEN_MS
       const scene = driver.dial()
       const pace = driver.pace()
@@ -420,6 +474,7 @@ export const register: Register = (on, options) => {
     applyLocal,
     leftSpine: () => {
       if (mounted?.requestId === SPINE) mounted = null
+      desktopSites.delete(SPINE)
     },
   }
   on('command.run', { command: COMMAND }, ($, e) => runScene($, e, sceneCtx))
@@ -455,6 +510,7 @@ export const register: Register = (on, options) => {
   on('ui.close', async ($, e, next) => {
     if (e.id !== SPINE) return next(e)
     if (mounted?.requestId === SPINE) mounted = null
+    desktopSites.delete(SPINE)
     // Closing the spine yourself means you'd rather have the band.
     if (e.origin.kind === 'person' && cfg.layout === 'spine') {
       applyLocal({ layout: 'band' })
@@ -466,11 +522,18 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: SPINE }, ($, e) => {
     const { Text } = $.ui.resolve(e)
-    if (e.surface !== 'terminal') return <Text dimColor>The scene draws in the terminal.</Text>
     if (cfg.layout !== 'spine') {
       if (mounted?.requestId === e.requestId) mounted = null
+      desktopSites.delete(e.requestId)
       return <Text dimColor>Flow is in the band above the prompt: `/flow spine` brings it here.</Text>
     }
+    if (e.surface === 'desktop') {
+      const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
+      const rows = Math.max(2, Math.min(256, e.props.scroll.bodyRows))
+      const { Svg } = $.ui.resolve(e)
+      return <Svg {...desktopSvg(e.requestId, columns, rows)} />
+    }
+    if (e.surface !== 'terminal') return <Text dimColor>The scene draws in the terminal and on desktop.</Text>
     // The scene fills the whole pane, whatever width the dock gave it.
     const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
     const rows = Math.max(2, Math.min(256, e.props.scroll.bodyRows))
@@ -483,10 +546,20 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
-    // Raster is terminal-only; another surface's band never touches ours.
-    if (e.surface !== 'terminal') return next(e)
     const rows = Math.min(MAX_ROWS, e.props.maxRows - 1)
-    if (cfg.layout === 'spine' || e.props.hasSurvey || !driver.isShown() || rows < 2) {
+    const hidden = cfg.layout === 'spine' || e.props.hasSurvey || !driver.isShown() || rows < 2
+    if (e.surface === 'desktop') {
+      // No Raster here: the frame is one Svg, redrawn by the frame loop.
+      if (hidden) {
+        desktopSites.delete(e.requestId)
+        return next(e)
+      }
+      const { Svg } = $.ui.resolve(e)
+      return <Svg {...desktopSvg(e.requestId, Math.max(1, Math.min(512, e.props.bodyColumns)), rows)} />
+    }
+    // Raster is terminal-only; any other surface's band never touches ours.
+    if (e.surface !== 'terminal') return next(e)
+    if (hidden) {
       if (mounted?.requestId === e.requestId) mounted = null
       return next(e)
     }

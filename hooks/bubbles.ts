@@ -1,4 +1,4 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v85-stronger-top
 //
 // Bubbles (the `bubbles` style): a glass of fizz on the same dials as the
 // fire; the level is the fizz. At 1 a couple of airstones let lazy bubbles
@@ -22,6 +22,7 @@
 import { Cells, Rng } from './cells'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, hash1, mix } from './pixels'
+import { defineScene } from './scene-def'
 
 /** The surface's rest height, in dots from the top: room above for the splash. */
 const SURFACE = 2
@@ -31,11 +32,11 @@ const MAX_DROPS = 400
 const MAX_SILT = 900
 
 /** Rise, in dots a frame, at each level (a tall spine scales it up). */
-const RISE = [0, 0.16, 0.24, 0.32, 0.42, 0.52, 0.62, 0.72, 0.82, 0.92, 1.02]
+const RISE = [0, 0.16, 0.24, 0.32, 0.42, 0.52, 0.62, 0.74, 0.9, 1.1, 1.35]
 /** Streams per 100 dots of width at each level. */
-const STREAMS = [0, 0.8, 1.4, 2.2, 3, 3.8, 4.7, 5.8, 7.2, 9.5, 12.5]
+const STREAMS = [0, 0.8, 1.4, 2.2, 3, 3.8, 4.7, 6, 8, 11, 15]
 /** Bubbles a stream lets go per frame at each level. */
-const RATE = [0, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15]
+const RATE = [0, 0.06, 0.07, 0.08, 0.09, 0.1, 0.11, 0.13, 0.16, 0.21, 0.28]
 
 /** A bubble's color by brightness, deep (0) to the glint (1): pale blue-white to white. */
 const WATER = [0x7fb4e4, 0xa8cff0, 0xcfe4f8, 0xeef6fe, 0xffffff]
@@ -233,11 +234,11 @@ export class Bubbles {
         if (b) st.wait = (b.r0 * (1.6 + s * 0.06) * 2 + 1.5) / b.vy
       }
     }
-    // From 5 up, fizz rises from everywhere along the bottom; in a boil, fat
-    // bubbles too.
-    const fizz = (W / 100) * Math.max(0, s - 4.5) * 0.35
+    // From 5 up, fizz rises from everywhere along the bottom, thickening fast
+    // from 7; from 7 a boil throws up fat bubbles too.
+    const fizz = (W / 100) * (Math.max(0, s - 4.5) * 0.35 + Math.max(0, s - 7) * 0.5)
     for (let n = fizz; n > 0; n--) if (this.rng.f() < n) this.emit(this.rng.f() * W, H + 1, true)
-    if (s > 8) for (let n = (W / 100) * (s - 8) * 0.6; n > 0; n--) if (this.rng.f() < n) this.emit(this.rng.f() * W, H + 2, false)
+    if (s > 7) for (let n = (W / 100) * (s - 7) * 0.8; n > 0; n--) if (this.rng.f() < n) this.emit(this.rng.f() * W, H + 2, false)
 
     // Rise, swell, wobble; pop at the surface.
     const surf = SURFACE
@@ -247,7 +248,7 @@ export class Bubbles {
       b.vy = Math.min(rise * 1.5, b.vy * 1.003)
       // Swell as the pressure drops: the farther up, the bigger, to a cap.
       const up = clamp((H - b.y) / Math.max(20, H))
-      b.r = Math.min(1.2 + s * 0.2, b.r0 * (1 + up * (0.6 + s * 0.06)))
+      b.r = Math.min(1.2 + s * 0.2 + Math.max(0, s - 7) * 0.15, b.r0 * (1 + up * (0.6 + s * 0.06)))
       // A boil rolls: base positions drift; every bubble wobbles, more as it grows.
       if (s > 6) b.bx += Math.sin(b.y * 0.07 + this.t * 0.03 + b.ph) * (s - 6) * 0.03
       b.x = b.bx + Math.sin(b.ph + this.t * b.fq) * (0.15 + b.r * 0.35)
@@ -451,3 +452,10 @@ export class Bubbles {
     return out
   }
 }
+
+export const bubblesScene = defineScene({
+  name: 'bubbles',
+  blurb: 'bubbles fizzing up',
+  night: true,
+  make: seed => new Bubbles(seed),
+})

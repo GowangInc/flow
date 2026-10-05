@@ -1,4 +1,4 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v82-aliases
 //
 // Warp (the `warp` style): a starfield on the same dials as the fire, the
 // level is the ship's speed.
@@ -13,6 +13,7 @@ import { Cells, Rng } from './cells'
 import { BRAILLE } from './pixels'
 import { params } from './fire'
 import type { Tint } from './styles'
+import { defineScene } from './scene-def'
 
 /** Depth travelled per frame at each level (0 = stopped). */
 const SPEED = [0, 0.0025, 0.004, 0.006, 0.009, 0.013, 0.018, 0.025, 0.034, 0.046, 0.062]
@@ -171,3 +172,10 @@ export class Starfield {
     return this.grid().encode()
   }
 }
+
+export const warpScene = defineScene({
+  name: 'warp',
+  blurb: 'stars that speed up to hyperspace',
+  aliases: ['starfield', 'stars'],
+  make: seed => new Starfield(seed),
+})

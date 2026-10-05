@@ -12,27 +12,33 @@ Flow: ambient terminal scenes that move with a coding agent's work. One codebase
 hooks/
   hooks.json         { "modules": ["./register.tsx"] }
   register.tsx       Claude Code adapter: hooks, frame loop, /flow, settings write-through
+  svg.ts             Claude desktop: a frame's cells as a PNG inside one Svg (pure, unit-tested)
   scene.ts           SceneDriver: shared by both adapters (scene per style, level, dials, pace)
   settings.ts        FlowConfig, the /flow grammar, every reply's wording (pure)
   activity.ts        how busy the agent is: work → level and tint (pure, unit-tested)
-  styles.ts          STYLES, the Scene interface and Tint, makeScene, night scenes; the fire (Ember)
+  styles.ts          SCENES (the one list of scenes), the Scene interface and Tint, makeScene; the fire (Ember)
+  scene-def.ts       SceneDef / defineScene: what a scene file exports so it can be listed
+  pixel-scene.ts     PixelScene: the quick base for a scene that paints pixels (easing, fold, specks, level 0)
   cells.ts           Cells (the grid every scene returns), Rng, Raster encoding
   pixels.ts          shared helpers: mix, dist, clamp, hash*, QUAD, BRAILLE, fitQuad, groupColor
   night.ts           the shared night: sky colors, STAR, MOON, moon placement
   fire.ts            the fire scene's automaton (its heat grid), glyphs and 256-color ramps
   fire-palette.ts    the fire scene's truecolor ramps
   <scene>.ts         one file per scene: starfield (warp), colony, balloon + sky + clouds/,
-                     engine, rocket (falcon, starship), surf, ski, river, bubbles, lava
+                     engine, rocket (falcon, starship), surf, ski, bubbles
 pi/
   index.ts           pi adapter (widget above the editor, /flow, ~/.pi/agent/flow.json)
   ansi.ts mapping.ts types.ts
+scripts/             Node tools, not part of the mod: new-scene, preview, check, sync-manifest
 tests/flow.test.ts   unit tests, plus some that need the mod engine
-package.json         the pi package ("pi": { "extensions": ["./pi/index.ts"] })
+package.json         the pi package ("pi": { "extensions": ["./pi/index.ts"] }) and the scripts
 ```
 
 ## Scenes
 
-A scene implements `Scene` (`hooks/styles.ts`) and is registered in `STYLES` and `makeScene`, in `plugin.json`'s `style` options, and (if it has one) in `NIGHT_STYLES`.
+A scene implements `Scene` (`hooks/styles.ts`). Its file exports a `SceneDef` (`defineScene({ name, blurb, night?, aliases?, make })`), listed once in `SCENES` in `styles.ts`; the `/flow` names, `/flow next`'s order and which scenes have a night all come from there. `plugin.json` must be literal JSON, so `npm run sync` copies the list into it and `npm run check` fails when they differ.
+
+- **Start one** with `npm run new-scene -- <name> --blurb "…" [--night]`: it writes `hooks/<name>.ts` on `PixelScene` (`hooks/pixel-scene.ts`), lists it and syncs `plugin.json`. `PixelScene` eases the level and the night, sizes a 2 × 2-a-cell pixel layer, folds it with `fitQuad`, lays braille specks over it and blanks level 0; a scene paints with `paint(px, dials)` and moves things in `update(dials)`. The bigger scenes predate it and do all of that themselves.
 
 - **Dials**, set every frame by `SceneDriver.dial()`:
   - `strength` 0–10: 0 draws nothing, every cell blank; 1 is calm idle; 10 is the busiest. Ease changes; never jump.
@@ -57,7 +63,8 @@ The engine validates the module before it runs (`claude plugin validate .`):
 - Names are literal strings: `$.env.get('NAME')`, atom refs, command filters.
 - No binding may shadow `next`.
 - No `console`, `process` or `Date.now()` in `hooks/`: they don't exist in the mod sandbox. Read time with `$.clock.now()`. A scene's `Rng` takes a seed.
-- Raster is terminal-only: a render on another surface returns text or `next(e)`.
+- Raster is terminal-only. On Claude desktop the band and spine draw one `Svg` a frame instead (`hooks/svg.ts`): the cells become pixels, 2 × 4 a cell (every quadrant, braille dot and eighth block on its own pixels), stored as a PNG in an `<image>` that desktop scales up with square pixels. An Svg's markup is at most 131,072 characters, so a bigger frame drops to 2 × 2 a cell, then 1 × 2, then 1 × 1, then one pixel for every few cells; the smaller sizes blend the pixels they cover so sparse glyphs dim rather than vanish.
+- Desktop has its own `SceneDriver` (`desktopDriver` in `register.tsx`) on the same settings, so a session drawn in the terminal and on desktop at once steps two scenes, each at its own size. The frame loop steps desktop's scene and invalidates its site (desktop redraws at most 10 times a second); the render only draws it. VS Code and mobile get nothing.
 
 ## Settings
 
@@ -73,10 +80,12 @@ The engine validates the module before it runs (`claude plugin validate .`):
 claude --plugin-dir .        # load it, with hot reload of the source
 claude plugin validate .     # the module's rules, the manifests, the hooks
 claude plugin test .         # the tests, including those that need the engine
+npm install                  # once, for the scripts below (tsx)
+npm run preview -- <scene>   # print it here: levels 1/5/10, band and spine, day/night, each tint
+npm run check                # plugin.json in step, level 0 blank, colour pairs, timing; exits 1 on a problem
 ```
 
 - Hot reload doesn't follow symlinks. To use a dev-mods folder, copy the plugin in (rsync) rather than linking it.
 - Every file starts with a `// REVISION: flow-vNN-<what>` line; bump it when you change the file. On load the mod logs `[flow] REVISION: …`, the local time and the UTC offset to the debug log (`claude --debug`), so you can tell which version is running.
-- After visual changes, render the scene at levels 1, 5 and 10 in both layouts, by day and night and with each tint, and look at it.
-- Check the color-pair count for each scene.
-- Check the timing.
+- After visual changes, run `npm run preview -- <scene>` (levels 1, 5 and 10 in both layouts, by day and night and with each tint) and look at it.
+- Run `npm run check`: the color-pair count and the timing for each scene.

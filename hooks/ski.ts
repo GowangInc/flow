@@ -1,4 +1,4 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v82-aliases
 //
 // A skier on a mountain, on the fire's dials: the level is the speed and the
 // steepness. At 1 the skier stands at the top of the run, poles planted,
@@ -27,10 +27,11 @@
 // yard sale: skis crossed, one stuck upright) under a flurry until things
 // are fixed; a nearly-full context turns the light to dusk.
 
-import { Cells, DEFAULT_COLOR, Rng } from './cells'
+import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
 import type { Tint } from './styles'
 import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
 import { BRAILLE, clamp, fitQuad, hashMurmur as hash, mix, QUAD, type QuadFit } from './pixels'
+import { defineScene } from './scene-def'
 
 // ---------------------------------------------------------------- tables
 
@@ -379,7 +380,7 @@ export class Ski {
     this.columns = columns
     this.rows = rows
     this.out = new Cells(columns, rows)
-    this.tall = rows > columns
+    this.tall = isTall(columns, rows)
     this.pw = columns * 2
     this.ph = rows * 2
     this.pix = new Uint32Array(this.pw * this.ph)
@@ -1421,3 +1422,11 @@ export class Ski {
       }
   }
 }
+
+export const skiScene = defineScene({
+  name: 'ski',
+  aliases: ['snow'],
+  blurb: 'a skier down the mountain',
+  night: true,
+  make: seed => new Ski(seed),
+})

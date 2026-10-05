@@ -1,4 +1,4 @@
-// REVISION: flow-v64-colony-placement
+// REVISION: flow-v82-aliases
 //
 // A colony ship on the same dials as the fire: the level is its speed. A
 // long ship like the Avalon holds steady (nose to the right in the band,
@@ -25,9 +25,10 @@
 // spine share every rule. The hull is a pixel layer folded into quadrant
 // glyphs; the bare spine, the shield, rocks and embers are braille dots.
 
-import { Cells, DEFAULT_COLOR, Rng } from './cells'
+import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, fitQuad, g, hash1 as hash, mix, NEAR, QUAD, type QuadFit } from './pixels'
+import { defineScene } from './scene-def'
 
 /** Cells per frame the nearest stars travel at each level (0 = off). */
 const SPEED = [0, 0.012, 0.03, 0.06, 0.11, 0.19, 0.32, 0.52, 0.85, 1.35, 2.1]
@@ -84,6 +85,9 @@ type Mote = { a: number; c: number; va: number; vc: number; life: number; max: n
 /** A strike on the shield: where, how long ago, and how big the rock was. */
 type Hit = { a: number; c: number; age: number; size: number }
 
+/** The ship and its shield, scaled from their original size. */
+const SHIP_SCALE = 0.9
+
 /** The ship's layout in the flight frame (dots), fixed per grid size. */
 type Geo = {
   A: number // the frame's length along
@@ -98,6 +102,7 @@ type Geo = {
   R: number // blade radius
   hw: number // engine half-width
   aV: number // the shield's vertex
+  sw: number // the shield's half-width across, from the centerline
   Rc: number // the shield's curvature radius
 }
 
@@ -145,7 +150,7 @@ export class Colony {
 
   /** Tall grids (the spine) fly nose-up with the stars streaming down. */
   private get isVertical(): boolean {
-    return this.rows > this.columns
+    return isTall(this.columns, this.rows)
   }
 
   ensure(columns: number, rows: number): void {
@@ -190,14 +195,15 @@ export class Colony {
     // The shield holds its place; the ship stands well back from it, small
     // against it (the shield spans the whole frame across).
     const aV = Math.round(A * (v ? 0.52 : 0.45)) + (v ? 7 : 8)
-    const aN = aV - (v ? 18 : 22)
-    const Ls = v ? Math.round(A * 0.25) : Math.round(clamp(A * 0.22, 22, 66))
-    const E = v ? 5 : 4
+    const aN = aV - Math.round((v ? 18 : 22) * SHIP_SCALE)
+    const Ls = Math.round(SHIP_SCALE * (v ? A * 0.25 : clamp(A * 0.22, 22, 66)))
+    const E = Math.round((v ? 5 : 4) * SHIP_SCALE)
     const h0 = E + Math.round(Ls * 0.1)
     const b0 = Ls - Math.max(6, Math.round(Ls * 0.11))
     const h1 = b0 - Math.max(4, Math.round(Ls * 0.07))
-    const R = v ? Math.min(Cd * 0.19, 8) : Cd * 0.22
-    const half = Cd / 2
+    const R = SHIP_SCALE * (v ? Math.min(Cd * 0.19, 8) : Cd * 0.22)
+    // The shield spans a fixed width beside the ship, however wide the frame.
+    const sw = Math.min(Cd / 2, R * 2.6)
     return {
       A,
       Cd,
@@ -209,10 +215,11 @@ export class Colony {
       h1,
       b0,
       R,
-      hw: v ? 2.5 : 2,
+      hw: (v ? 2.5 : 2) * SHIP_SCALE,
       aV,
+      sw,
       // How far the arc bends back at its ends: about 2 rows in the spine, 2-3 cells in the band.
-      Rc: (half * half) / (2 * (v ? 9 : 6)),
+      Rc: (sw * sw) / (2 * (v ? 9 : 6) * SHIP_SCALE),
     }
   }
 
@@ -260,7 +267,10 @@ export class Colony {
 
   /** Rocks: spawn at the leading edge (rarely at 1, every second or so at 10), drift in, burn up on the shield. */
   private stepRocks(): void {
-    const { A, Cd } = this.geo
+    const { A, Cd, c0, sw } = this.geo
+    // Rocks come at the shield, whole, never clipped by an edge.
+    const lo = Math.max(0, c0 - sw)
+    const hi = Math.min(Cd, c0 + sw)
     const l = clamp(this.level, 0, 10)
     const rate = l < 0.5 ? 0 : 0.0022 * Math.pow(0.075 / 0.0022, (l - 1) / 9)
     if (this.rng.f() < rate) {
@@ -269,7 +279,7 @@ export class Colony {
       const r = ROCK_R[size]!
       this.rocks.push({
         a: A + r + 1,
-        c: Cd > r * 2.4 ? r * 1.15 + this.rng.f() * (Cd - r * 2.3) : Cd / 2, // whole, not clipped by an edge
+        c: hi - lo > r * 2.4 ? lo + r * 1.15 + this.rng.f() * (hi - lo - r * 2.3) : c0,
         dc: (this.rng.f() - 0.5) * 0.08,
         k: 0.7 + this.rng.f() * 0.6,
         size,
@@ -281,7 +291,7 @@ export class Colony {
     const v = this.rockSpeed
     this.rocks = this.rocks.filter(rock => {
       rock.a -= v * rock.k
-      rock.c = clamp(rock.c + rock.dc, 0, Cd - 1)
+      rock.c = clamp(rock.c + rock.dc, lo, hi - 1)
       rock.ang += rock.spin * (1 + v * 0.3)
       const r = ROCK_R[rock.size]!
       if (rock.a - r * 0.75 > this.arcA(rock.c)) return true
@@ -443,7 +453,7 @@ export class Colony {
    * strike's ripple running out from where it hit.
    */
   private drawShield(level: number): void {
-    const { Cd } = this.geo
+    const { Cd, c0, sw } = this.geo
     const smoke = this.tint === 'smoke'
     const blue = this.tint === 'blue'
     const ramp = smoke ? C.shieldSmoke : blue ? C.shieldBlue : C.shield
@@ -451,7 +461,7 @@ export class Colony {
     const busy = level / 10
     // Smoke: the shield stutters, whole stretches dropping out and the rest guttering.
     const gutter = smoke ? (hash(this.seedBase + (this.t >> 2) * 13) < 0.3 ? 0.35 : 0.75) : 1
-    for (let c = 0.25; c < Cd; c += 0.5) {
+    for (let c = Math.max(0, c0 - sw) + 0.25; c < Math.min(Cd, c0 + sw); c += 0.5) {
       if (smoke && hash(((c / 3) | 0) * 131 + (this.t >> 1) * 7 + this.seedBase) < 0.4) continue
       let I = base
       for (const hit of this.hits) {
@@ -466,6 +476,9 @@ export class Colony {
       // The glow behind it follows the level and the strikes; the edge also shimmers, busier with the level.
       const lightI = I * gutter
       I = (I + busy * 0.22 * (0.5 + 0.5 * Math.sin(c * 0.45 - this.t * 0.31)) + busy * 0.12 * hash((c | 0) * 31 + this.t * 17)) * gutter
+      // Its tips fade out rather than stop.
+      const tip = Math.min(1, (sw - Math.abs(c - c0)) / 2.5)
+      I *= tip
       if (I < 0.08) continue
       const a = this.arcA(c)
       const color = ramp[Math.min(ramp.length - 1, Math.floor(I * (ramp.length - 0.5)))]!
@@ -473,7 +486,7 @@ export class Colony {
       this.plot(a + 1, c, color, P.shield)
       if (blue || I > 0.9) this.plot(a + 2, c, color, P.shield) // glowing hard: a thicker edge
       const cell = this.cellAt(a, c)
-      if (cell >= 0 && !smoke && lightI > this.glow[cell]!) this.glow[cell] = lightI
+      if (cell >= 0 && !smoke && lightI * tip > this.glow[cell]!) this.glow[cell] = lightI * tip
     }
   }
 
@@ -594,7 +607,7 @@ export class Colony {
     if (s >= geo.b0) {
       // The bow: a rounded nose, the shield's emitter at its tip.
       const f = (s - geo.b0) / (Ls - geo.b0)
-      const hw = 0.9 + 2.4 * Math.sqrt(Math.max(0, 1 - f * f))
+      const hw = (0.9 + 2.4 * Math.sqrt(Math.max(0, 1 - f * f))) * SHIP_SCALE
       if (ad >= hw) return
       px.kind = K.hull
       px.color = f > 0.82 ? C.emitter : C.bow[ad < hw * 0.5 ? 1 : 0]!
@@ -752,3 +765,10 @@ export class Colony {
     return this.grid().encode()
   }
 }
+
+export const avalonScene = defineScene({
+  name: 'avalon',
+  aliases: ['colony', 'interstellar'],
+  blurb: 'a colony ship whose shield burns up the asteroids that hit it',
+  make: seed => new Colony(seed),
+})
