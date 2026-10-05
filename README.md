@@ -1,6 +1,6 @@
 # flow
 
-Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, a river, fizzing bubbles, a liquid lamp, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, and a colony ship behind its shield. They run above the prompt of Claude Code or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
+Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, a river, fizzing bubbles, a liquid lamp, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, and a colony ship behind its shield. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
 
 By Rob Macrae.
 
@@ -80,7 +80,7 @@ A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes se
 
 ## Turning it off
 
-Run `/flow off`, or `/flow idle dark` to stay in auto mode but show nothing while idle. You can also disable the plugin. Flow only draws in the terminal.
+Run `/flow off`, or `/flow idle dark` to stay in auto mode but show nothing while idle. You can also disable the plugin. Flow draws in the terminal and in the Claude desktop app; not in VS Code or on mobile.
 
 ## pi
 

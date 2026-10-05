@@ -1,4 +1,4 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v66-desktop
 
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -13,6 +13,7 @@ import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
 import { makeScene, nextStyle, STYLES } from '../hooks/styles'
 import { keepOverrides, writeThrough } from '../hooks/register'
+import { rowRuns } from '../hooks/desktop'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -523,13 +524,61 @@ test('the band yields to other surfaces, surveys, and a one-row squeeze', async 
   mock.store(on)
   engine(on)
   for (const [surface, props] of [
-    ['desktop', BAND.props],
+    ['vscode', BAND.props],
     ['terminal', { ...BAND.props, hasSurvey: true }],
     ['terminal', { ...BAND.props, maxRows: 2 }],
   ] as const) {
     const ui = await $.ui.mount({ plugin: 'flow', surface, component: 'AbovePrompt', props })
     expect(await ui.find({ type: 'Raster' })).toBeUndefined()
     await ui.unmount()
+  }
+})
+
+test('on desktop the band hands a surface module the dials', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...BAND })
+  const client = await ui.find({ type: 'Client', key: 'flow' })
+  expect(client?.props.module).toBe('hooks/desktop.tsx')
+  expect(client?.props.height).toBe(5)
+  expect((client?.props.props as { style: string }).style).toBe('fire')
+  // The module steps the scene on its own clock and draws rows of colored runs.
+  await ui.resize({ columns: 60, rows: 5 })
+  await ui.advance(1000)
+  const runs = await ui.findAll({ type: 'Text', in: 'flow' })
+  expect(runs.length).toBeGreaterThan(5)
+  await ui.unmount()
+})
+
+test('desktop: a big region at full tilt stays inside the tree bounds', { options: { style: 'river', mode: 'manual', level: 10 } }, async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  await start($)
+  for (const [columns, rows] of [[250, 5], [40, 120]] as const) {
+    const ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...BAND })
+    await ui.resize({ columns, rows })
+    await ui.advance(3000)
+    const size = JSON.stringify(await ui.drawn({ in: 'flow' })).length
+    expect(size).toBeLessThan(100_000)
+    await ui.unmount()
+  }
+})
+
+test('desktop: each row as runs that fill its width, full blocks drawn as their color', async () => {
+  for (const style of STYLES) {
+    const s = makeScene(style, 7)
+    s.strength = 8
+    s.ensure(40, 5)
+    for (let i = 0; i < 20; i++) s.step()
+    const grid = s.grid()
+    for (let r = 0; r < grid.rows; r++) {
+      const runs = rowRuns(grid, r)
+      expect([...runs.map(x => x.text).join('')].length).toBe(40)
+      expect(runs.some(x => x.text.includes('\u2588'))).toBe(false)
+    }
   }
 })
 

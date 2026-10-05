@@ -1,6 +1,6 @@
 {
   "name": "flow",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Ambient scenes above the prompt that move with your agent's work: a fire, a river, bubbles, a liquid lamp, surf, ski, rockets, a hot-air balloon and more, by day or night. /flow to control it.",
   "author": {
     "name": "Rob Macrae"

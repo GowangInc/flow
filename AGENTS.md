@@ -12,6 +12,7 @@ Flow: ambient terminal scenes that move with a coding agent's work. One codebase
 hooks/
   hooks.json         { "modules": ["./register.tsx"] }
   register.tsx       Claude Code adapter: hooks, frame loop, /flow, settings write-through
+  desktop.tsx        Claude desktop: a Client surface module that steps the scene itself, drawn as Text runs
   scene.ts           SceneDriver: shared by both adapters (scene per style, level, dials, pace)
   settings.ts        FlowConfig, the /flow grammar, every reply's wording (pure)
   activity.ts        how busy the agent is: work → level and tint (pure, unit-tested)
@@ -57,7 +58,7 @@ The engine validates the module before it runs (`claude plugin validate .`):
 - Names are literal strings: `$.env.get('NAME')`, atom refs, command filters.
 - No binding may shadow `next`.
 - No `console`, `process` or `Date.now()` in `hooks/`: they don't exist in the mod sandbox. Read time with `$.clock.now()`. A scene's `Rng` takes a seed.
-- Raster is terminal-only: a render on another surface returns text or `next(e)`.
+- Raster is terminal-only. On Claude desktop the band and spine draw a `Client` (`hooks/desktop.tsx`) instead: it gets the dials as props (redrawn only when they change), steps the scene on its own frame clock and draws each row as runs of colored `Text`. A Client's tree must serialize under 100,000 characters, so it coarsens colors and then lays the scene out in fewer rows when a frame would be bigger. VS Code and mobile get nothing.
 
 ## Settings
 

@@ -1,10 +1,13 @@
-// REVISION: flow-v65-panes-optional
+// REVISION: flow-v66-desktop
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
 // band above the prompt (5 rows) or in a tall pane docked beside the
 // transcript (the spine), and repainted with `$.ui.blit`: ~14 fps while busy,
 // 8 fps when calm, not at all while off screen or a frame comes out unchanged.
+// Claude desktop has no Raster: there a `Client` surface module (desktop.tsx)
+// runs the same scene on the desktop's own clock, handed the dials when they
+// change.
 //
 // Auto mode (the default) moves with the work Claude is doing: idle it sits
 // at a low glow (or dark); a turn lifts it by effort, streamed output keeps
@@ -24,6 +27,7 @@ import type { CommandRunInput, CommandRunResult, EngineInterface, Register } fro
 
 import { Balloon } from './balloon'
 import { Activity, linesWritten } from './activity'
+import type { DesktopProps } from './desktop'
 import { FRAME_MS, SceneDriver } from './scene'
 import {
   changedText,
@@ -38,7 +42,7 @@ import {
 import { styleNamed } from './styles'
 
 
-const FLOW_REVISION = 'flow-v65-panes-optional'
+const FLOW_REVISION = 'flow-v66-desktop'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -216,6 +220,19 @@ export const register: Register = (on, options) => {
   /** The tick a blit went out on, -1 when none is in flight. */
   let blitAt = -1
   let lastCells = ''
+  /** The desktop sites drawing the scene (band, spine), and the dials they last drew with. */
+  const desktopSites = new Set<string>()
+  let desktopDials = ''
+  const desktopProps = (): DesktopProps => {
+    const scene = driver.dial()
+    return {
+      style: cfg.style,
+      strength: scene.strength,
+      coverageBoost: scene.coverageBoost,
+      tint: scene.tint,
+      night: driver.isNight(),
+    }
+  }
 
   /** Apply a change here at once and redraw from scratch (the caller invalidates). */
   const applyLocal = (changes: Partial<FlowConfig>) => {
@@ -288,8 +305,10 @@ export const register: Register = (on, options) => {
         wasShown = shown
         $.ui.invalidate('ui.render')
       }
+      // A desktop site steps its own frames: it redraws only when its dials change.
+      if (desktopSites.size && JSON.stringify(desktopProps()) !== desktopDials) $.ui.invalidate('ui.render')
       const site = mounted
-      if (!site) return HIDDEN_MS
+      if (!site) return desktopSites.size ? driver.pace() : HIDDEN_MS
       const scene = driver.dial()
       const pace = driver.pace()
       if (blitAt >= 0 && ticks - blitAt < BLIT_STALE_TICKS) return pace
@@ -420,6 +439,7 @@ export const register: Register = (on, options) => {
     applyLocal,
     leftSpine: () => {
       if (mounted?.requestId === SPINE) mounted = null
+      desktopSites.delete(SPINE)
     },
   }
   on('command.run', { command: COMMAND }, ($, e) => runScene($, e, sceneCtx))
@@ -455,6 +475,7 @@ export const register: Register = (on, options) => {
   on('ui.close', async ($, e, next) => {
     if (e.id !== SPINE) return next(e)
     if (mounted?.requestId === SPINE) mounted = null
+    desktopSites.delete(SPINE)
     // Closing the spine yourself means you'd rather have the band.
     if (e.origin.kind === 'person' && cfg.layout === 'spine') {
       applyLocal({ layout: 'band' })
@@ -466,11 +487,19 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: SPINE }, ($, e) => {
     const { Text } = $.ui.resolve(e)
-    if (e.surface !== 'terminal') return <Text dimColor>The scene draws in the terminal.</Text>
     if (cfg.layout !== 'spine') {
       if (mounted?.requestId === e.requestId) mounted = null
+      desktopSites.delete(e.requestId)
       return <Text dimColor>Flow is in the band above the prompt: `/flow spine` brings it here.</Text>
     }
+    if (e.surface === 'desktop') {
+      desktopSites.add(e.requestId)
+      const props = desktopProps()
+      desktopDials = JSON.stringify(props)
+      const { Client } = $.ui.resolve(e)
+      return <Client key={KEY} module="./desktop.tsx" width="100%" height={Math.max(2, e.props.scroll.bodyRows)} props={props} />
+    }
+    if (e.surface !== 'terminal') return <Text dimColor>The scene draws in the terminal and on desktop.</Text>
     // The scene fills the whole pane, whatever width the dock gave it.
     const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
     const rows = Math.max(2, Math.min(256, e.props.scroll.bodyRows))
@@ -483,10 +512,23 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
-    // Raster is terminal-only; another surface's band never touches ours.
-    if (e.surface !== 'terminal') return next(e)
     const rows = Math.min(MAX_ROWS, e.props.maxRows - 1)
-    if (cfg.layout === 'spine' || e.props.hasSurvey || !driver.isShown() || rows < 2) {
+    const hidden = cfg.layout === 'spine' || e.props.hasSurvey || !driver.isShown() || rows < 2
+    if (e.surface === 'desktop') {
+      // No Raster here: a surface module steps the scene on the desktop's clock.
+      if (hidden) {
+        desktopSites.delete(e.requestId)
+        return next(e)
+      }
+      desktopSites.add(e.requestId)
+      const props = desktopProps()
+      desktopDials = JSON.stringify(props)
+      const { Client } = $.ui.resolve(e)
+      return <Client key={KEY} module="./desktop.tsx" width="100%" height={rows} props={props} />
+    }
+    // Raster is terminal-only; any other surface's band never touches ours.
+    if (e.surface !== 'terminal') return next(e)
+    if (hidden) {
       if (mounted?.requestId === e.requestId) mounted = null
       return next(e)
     }
