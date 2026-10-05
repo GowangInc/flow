@@ -1,0 +1,89 @@
+{
+  "name": "flow",
+  "version": "0.6.0",
+  "description": "Ambient scenes above the prompt that move with your agent's work: a fire, a river, bubbles, a liquid lamp, surf, ski, rockets, a hot-air balloon and more, by day or night. /flow to control it.",
+  "author": {
+    "name": "Rob Macrae"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/robdmac/flow",
+  "homepage": "https://github.com/robdmac/flow",
+  "keywords": [
+    "fun",
+    "ui",
+    "animation",
+    "ambient",
+    "status",
+    "terminal-art"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Scene mode",
+      "description": "auto moves with Claude's work; manual holds the level below",
+      "default": "auto",
+      "options": [
+        "auto",
+        "manual"
+      ]
+    },
+    "style": {
+      "type": "string",
+      "title": "Scene",
+      "description": "fire: a ░▒▓█ fire with sparks and smoke; warp: stars that speed up to hyperspace; colony: a colony ship whose shield burns up the asteroids that hit it; balloon: a hot-air balloon that climbs from the grass to space; engine: a steampunk engine that runs up to full speed; falcon / starship: rockets that launch from the pad and are caught by the tower on the way down; surf: a surfer and the swell; ski: a skier down the mountain; river: a river running past; bubbles: bubbles fizzing up; lava: liquid churning in a lamp",
+      "default": "fire",
+      "options": [
+        "fire",
+        "warp",
+        "colony",
+        "balloon",
+        "engine",
+        "falcon",
+        "starship",
+        "surf",
+        "ski",
+        "river",
+        "bubbles",
+        "lava"
+      ]
+    },
+    "idle": {
+      "type": "string",
+      "title": "Scene while idle",
+      "description": "Auto mode while Claude is idle: a low glow, or dark (the band gives its rows back)",
+      "default": "glow",
+      "options": [
+        "glow",
+        "dark"
+      ]
+    },
+    "layout": {
+      "type": "string",
+      "title": "Scene layout",
+      "description": "band: a strip above the prompt; spine: a tall pane docked beside the transcript (fullscreen)",
+      "default": "band",
+      "options": [
+        "band",
+        "spine"
+      ]
+    },
+    "level": {
+      "type": "number",
+      "title": "Manual level",
+      "description": "Manual mode's level: 0 (off) to 10 (the busiest the scene gets)",
+      "default": 8
+    },
+    "time": {
+      "type": "string",
+      "title": "Day or night",
+      "description": "For balloon, falcon, starship, surf, ski, river and bubbles: clock follows your local time (night from 19:00 to 7:00); day or night pins it",
+      "default": "clock",
+      "options": [
+        "clock",
+        "day",
+        "night"
+      ]
+    }
+  }
+}
