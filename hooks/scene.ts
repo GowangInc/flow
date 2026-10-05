@@ -1,10 +1,11 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v80-scene-follows-cfg
 //
 // What every harness adapter (Claude Code's register.tsx, pi's pi/index.ts)
 // does the same way: one scene instance per style (so a switch resumes where
 // that scene left off), the level the settings and the activity call for, whether
 // anything shows at all, and pointing the current scene at those dials and
-// the time of day. Pure: no engine imports.
+// the time of day. Two drivers can share one cfg (each with its own scenes):
+// the scene follows the shared style. Pure: no engine imports.
 
 import { type Activity } from './activity'
 import { isNightAt, type Clock, type FlowConfig } from './settings'
@@ -16,16 +17,17 @@ const CALM_MS = 125
 
 export class SceneDriver {
   private readonly scenes = new Map<SceneName, Scene>()
-  /** The scene for the configured style. */
-  scene: Scene
   /** The local time, which the adapter keeps current (noon until it first reads the clock). */
   clock: Clock = { hour: 12, minute: 0 }
 
   constructor(
     readonly cfg: FlowConfig,
     readonly activity: Activity,
-  ) {
-    this.scene = this.sceneFor(cfg.style)
+  ) {}
+
+  /** The scene for the configured style. */
+  get scene(): Scene {
+    return this.sceneFor(this.cfg.style)
   }
 
   /** The one instance of a style, built on first use. */
@@ -38,7 +40,6 @@ export class SceneDriver {
   /** Apply settings changes here at once (the caller saves and redraws). */
   apply(changes: Partial<FlowConfig>): void {
     Object.assign(this.cfg, changes)
-    if (changes.style) this.scene = this.sceneFor(changes.style)
   }
 
   /** The level now: the manual setting, or what the work's activity calls for. */

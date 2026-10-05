@@ -1,16 +1,34 @@
-// REVISION: flow-v44-rocket-resume
+// REVISION: flow-v102-review-fixes
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
-// beside a lattice launch tower with two catch arms. The level is the
+// beside a lattice launch tower (Starship's with two catch arms). The level is the
 // rocket's target altitude. At 1 it stands on the pad, fuelled, venting
 // white vapour. When the level rises it ignites, holds a beat while steam
 // billows off the pad, then lifts off: slowly, then faster, the plume
 // (white-hot core, orange, fading red) trailing a contrail that falls away
 // below as the clouds go by, until at 10 it hangs among the stars over
-// Earth's rim. When the level falls back it comes down nose up, coasting,
-// then lights a landing burn; the tower's arms ride up to meet it and swing
-// shut around it in mid-air, lower it onto the pad, open again, and it goes
-// back to venting.
+// Earth's rim. High in the climb (about level 7) the stack separates: the
+// spent booster falls away and the upper stage flies on, on one narrower
+// engine. Only the booster comes home: when the level falls back the upper
+// stage goes on to orbit and the booster comes down, grid fins out,
+// coasting, then lights a landing burn. Once the falling booster has left
+// the frame the screen splits (side by side in the band, top and bottom in
+// a tall pane): the booster's side follows it back down through the sky a
+// layer a second, then slides away; the other stays with the upper stage,
+// whatever the level. Falcon's booster puts its legs out only for its
+// landing burn, on a landing zone out of sight of the pad.
+// Falcon carries Dragon: in orbit it parts from the second stage (which
+// drifts off, to burn up). Brought home, Dragon drops its trunk, comes in
+// glowing, opens two drogues then four striped mains and splashes down at
+// sea; a moment later the camera slides back along the coast to the pad,
+// reset for the next flight. Starship's booster is caught by the tower's
+// arms in mid-air and lowered onto the mount. Brought home, the Ship comes
+// in belly-first, tiles glowing, flips upright for its landing burn and
+// splashes down, is carried in by barge and transporter to beside the
+// waiting booster, and the arms reach over, lift it, swing it across and
+// lower it on. Then the stack goes back to venting. A mission only climbs:
+// a dip in the work holds the level, and only back at 1 does it come home,
+// a level a second, all the way.
 //
 // Everything is drawn into a pixel layer at quadrant resolution (two pixels
 // per cell across, two down) and composited over the sky: each cell keeps
@@ -31,6 +49,7 @@ import { layered, snap } from './clouds/layered'
 import { STAR, STAR_DIM } from './night'
 import { fitQuad, g, hash, lowerBlock, mix, QUAD, type QuadFit } from './pixels'
 import { type SceneryCell, SkyWorld } from './sky'
+import { defineScene } from './scene-def'
 
 const ceilEven = (n: number) => n + (n & 1)
 
@@ -51,6 +70,11 @@ function sprite(rows: readonly string[], pal: Record<string, number>): Sprite {
   return { w, h, c }
 }
 
+/** The first row holding `ch`: where a sprite's booster starts. */
+function firstRow(rows: readonly string[], ch: string): number {
+  return rows.findIndex(r => r.includes(ch))
+}
+
 const FALCON_PAL = {
   W: 0xf4f5f7, // white body, lit side
   w: 0xc3c8d0, // its shaded side
@@ -58,6 +82,8 @@ const FALCON_PAL = {
   G: 0x3a3e46, // grid fins
   L: 0x2c2f35, // deployed legs
   E: 0x70757d, // Merlin bells
+  H: 0x2a2c31, // Dragon's heat shield
+  P: 0x23315a, // the trunk's solar cells
 }
 
 const STARSHIP_PAL = {
@@ -77,14 +103,16 @@ const STARSHIP_PAL = {
 const FALCON_BAND = ['..Ww..', '..Ww..', '..KK..', '.GWwG.', '..Ww..', '..Ww..', '..KK..']
 const FALCON_BAND_LAND = ['..Ww..', '..Ww..', '..KK..', '.GWwG.', '..Ww..', '..Ww..', 'L.KK.L']
 
-// Falcon 9 in the spine: fairing, second stage, black interstage, grid fins,
-// the long first stage, stowed legs and the octaweb with its Merlins.
+// Falcon 9 in the spine: Dragon (its nose cap, the capsule, the dark heat
+// shield, the trunk with its solar cells), the second stage, the black
+// interstage, grid fins, the long first stage, stowed legs and the octaweb
+// with its Merlins.
 const FALCON_TALL_TOP = [
   '....Ww....',
   '...WWWw...',
   '...WWWw...',
-  '...WWWw...',
-  '...WWWw...',
+  '...HHHH...',
+  '...WPPw...',
   '...WWWw...',
   '...WWWw...',
   '...WWWw...',
@@ -95,6 +123,17 @@ const FALCON_TALL_MID = Array<string>(12).fill('...WWWw...')
 const FALCON_TALL = [
   ...FALCON_TALL_TOP,
   '..GWWWwG..',
+  ...FALCON_TALL_MID,
+  '...KWwK...',
+  '...KWwK...',
+  '...KWwK...',
+  '...KWwK...',
+  '...KKKK...',
+  '....EE....',
+]
+const FALCON_TALL_FINS = [
+  ...FALCON_TALL_TOP,
+  '.GGWWWwGG.',
   ...FALCON_TALL_MID,
   '...KWwK...',
   '...KWwK...',
@@ -141,8 +180,15 @@ const STARSHIP_TALL = [
 /** One rocket in one layout. All in pixels; rows of a sprite count from its top. */
 interface Spec {
   fly: Sprite
-  /** Its look coming in to land: legs out, grid fins deployed. */
+  /** The booster coming home: grid fins deployed, legs still stowed. */
+  fins: Sprite
+  /** Its look landing and landed: legs out too. */
   land: Sprite
+  /** The first sprite row of the booster (the first stage): the rows above are the upper stage. */
+  stage: number
+  /** Falcon's Dragon at the top of the upper stage: its rows (capsule and trunk), and the capsule's alone. */
+  dragon?: number
+  capsule?: number
   /** The sprite column the body starts at, and its width. */
   bodyL: number
   bodyW: number
@@ -170,7 +216,11 @@ interface Spec {
 const FALCON_SPECS: [band: Spec, tall: Spec] = [
   {
     fly: sprite(FALCON_BAND, FALCON_PAL),
+    fins: sprite(FALCON_BAND, FALCON_PAL),
     land: sprite(FALCON_BAND_LAND, FALCON_PAL),
+    stage: firstRow(FALCON_BAND, 'K'),
+    dragon: 1,
+    capsule: 1,
     bodyL: 2,
     bodyW: 2,
     grip: 1,
@@ -190,7 +240,11 @@ const FALCON_SPECS: [band: Spec, tall: Spec] = [
   },
   {
     fly: sprite(FALCON_TALL, FALCON_PAL),
+    fins: sprite(FALCON_TALL_FINS, FALCON_PAL),
     land: sprite(FALCON_TALL_LAND, FALCON_PAL),
+    stage: firstRow(FALCON_TALL, 'K'),
+    dragon: firstRow(FALCON_TALL, 'P') + 1,
+    capsule: firstRow(FALCON_TALL, 'P'),
     bodyL: 3,
     bodyW: 4,
     grip: 16,
@@ -215,7 +269,9 @@ const FALCON_SPECS: [band: Spec, tall: Spec] = [
 const STARSHIP_SPECS: [band: Spec, tall: Spec] = [
   {
     fly: sprite(STARSHIP_BAND, STARSHIP_PAL),
+    fins: sprite(STARSHIP_BAND, STARSHIP_PAL),
     land: sprite(STARSHIP_BAND, STARSHIP_PAL),
+    stage: firstRow(STARSHIP_BAND, 'G'),
     bodyL: 1,
     bodyW: 4,
     grip: 1,
@@ -235,7 +291,9 @@ const STARSHIP_SPECS: [band: Spec, tall: Spec] = [
   },
   {
     fly: sprite(STARSHIP_TALL, STARSHIP_PAL),
+    fins: sprite(STARSHIP_TALL, STARSHIP_PAL),
     land: sprite(STARSHIP_TALL, STARSHIP_PAL),
+    stage: firstRow(STARSHIP_TALL, 'D'),
     bodyL: 2,
     bodyW: 6,
     grip: 18,
@@ -280,10 +338,13 @@ interface Look {
   ramp: Ramp
   /** Mechazilla: X-braced, a lightning rod, a carriage the arms ride on. */
   mechazilla: boolean
+  /** The tower's arms catch it coming home; without them it lands on its legs on the pad. */
+  catches: boolean
 }
 
 const PAD: SceneryCell = { glyph: g('▀'), fg: 0x9a9da3, bg: 0x6b6e74 }
 const TRENCH: SceneryCell = { glyph: g('▀'), fg: 0x4a4c50, bg: 0x6b6e74 }
+const SEA: SceneryCell = { glyph: g('▀'), fg: 0x3a7cc0, bg: 0x1d4e8e }
 
 const LIGHT = { red: 0xff3b30, amber: 0xffb020, green: 0x5cff7a, blue: 0x4aa8ff }
 
@@ -303,7 +364,19 @@ const VMAX = 2.2
 const VMAX_DOWN = 1.6
 const ACC_DOWN = 0.025
 
-type State = 'rest' | 'ignite' | 'fly' | 'catch' | 'lower' | 'release'
+type State = 'rest' | 'ignite' | 'fly' | 'catch' | 'lower' | 'release' | 'landed' | 'carry' | 'stack' | 'pan'
+
+/** What flies as the rocket: the whole stack, the upper stage after separation, or the booster coming home. */
+type Part = 'full' | 'upper' | 'booster' | 'dragon' | 'capsule' | 'stage2' | 'trunk'
+
+/** A stage that has parted from the rocket: drawn sliding away along its axis (`d` sprite rows), fading out. */
+type Ghost = { part: Part; d: number; v: number; acc: number; life: number; max: number }
+
+/** The layer (world rows) where the climbing stack separates: about level 7. */
+const SEP_LAYER = 80
+/** Frames a landed Falcon stands at the landing zone before it's moved back to the pad. */
+const LANDED_FRAMES = 42
+
 
 // Flight. Aloft, the level picks a layer of the atmosphere (world rows, the
 // sky's scale: 2 per cloud-painter row) and a climb speed; the rocket never
@@ -343,6 +416,8 @@ const OCEAN = 0x1d4e8e
 abstract class LaunchSite extends SkyWorld {
   protected abstract readonly specs: [band: Spec, tall: Spec]
   protected abstract readonly look: Look
+  /** Another site like this one, for the split screen. */
+  protected abstract twin(): LaunchSite
 
   /** The level being acted out: it walks toward the asked-for level a stage at a time. */
   private staged = -1
@@ -355,13 +430,26 @@ abstract class LaunchSite extends SkyWorld {
     if (asked === 0 || this.staged < 0) {
       // Off is instant; a fresh start (a reload, the first frame) resumes as asked.
       this.staged = asked
-    } else if (asked !== this.staged && this.sinceStage >= STAGE_FRAMES) {
-      this.staged += Math.sign(asked - this.staged)
-      this.sinceStage = 0
+      this.descending = false
+    } else if (this.sinceStage >= STAGE_FRAMES) {
+      // A mission only climbs: a dip in the work holds it where it is. Asked
+      // all the way back to 1 it comes home, a level a second, all the way,
+      // whatever's asked meanwhile.
+      if (this.descending || (asked <= 1 && this.staged > 1)) {
+        this.staged--
+        this.sinceStage = 0
+        this.descending = this.staged > 1
+      } else if (asked > this.staged) {
+        this.staged++
+        this.sinceStage = 0
+      }
     }
     this.strength = this.staged
     super.step()
   }
+
+  /** Coming home: the acted-out level walking down to 1. */
+  private descending = false
 
   /** Drawn at the acted-out level too, even on a frame drawn without a step. */
   override grid(): Cells {
@@ -380,6 +468,59 @@ abstract class LaunchSite extends SkyWorld {
   private reach = 0
   /** The service arm: 1 across to the rocket, 0 swung away. */
   private service = 1
+  /** What flies now, and a stage parted from it, still drawn while it falls or flies away. */
+  private part: Part = 'full'
+  private ghost: Ghost | null = null
+  /** How faded in the booster is after the cut to it coming home (0..1). */
+  private fadeIn = 1
+  /** The rocket's place along the ground from the launch mount (pixels): out at the landing zone, back after. */
+  private pos = 0
+  /** The camera's place along the ground (pixels): it follows the booster out to the landing zone and back. */
+  private view = 0
+  /** The landing zone, off along the ground from the mount (pixels, left, out of sight of the pad), or 0 for none. */
+  private lz = 0
+  /** Restacking Starship: the Ship's place along the ground, its height above its stacked place (pixels), and the step. */
+  private shipX = 0
+  private stackOff = 0
+  private phase = 0
+  /** How far the arms reach out past the rocket's axis (pixels, left): over to the Ship on its transporter. */
+  private armX = 0
+  /** Coming home (and then being stacked again): it can't relaunch until it's back together on the pad. */
+  private returning = false
+  /**
+   * Starship's split screen: a second site on the left, following the booster
+   * back into the arms while this one stays with the Ship; its width (cells,
+   * easing in and out) and the width it's drawn at.
+   */
+  private twinSite: LaunchSite | null = null
+  private splitW = 0
+  private twinW = 0
+  /** The twin's frames since its booster came to rest on the mount (then the panel slides away). */
+  private twinDone = 0
+  /** Starship has separated: the split screen opens once the falling booster has left the frame. */
+  private twinDue = false
+  /** This site only brings a booster home (the split screen's left side): no Ship to stack after. */
+  private boosterOnly = false
+  /** Starship's booster is back on the mount, waiting for the Ship. */
+  private boosterHome = false
+  /** Splash: frames since the Ship came down in the sea (spray). */
+  private splash = 0
+  /** The recovery vessel's place along the ground (pixels): a barge on the sea, a transporter on land; NaN when there's none. */
+  private carrierX = Number.NaN
+  /** Dragon coming home: frames since it began (0 = not). */
+  private burn = 0
+  /** The Ship coming in belly-first: 0 upright .. 1 flat (nose toward the sea), eased. */
+  private flop = 0
+  /** Dragon's capsule leaning into its lifting entry (radians), eased. */
+  private lean = 0
+  /** The Ship's end at sea: frames of fireball since it tipped over. */
+  private boom = 0
+  /** Dragon's parachutes: 0 none, 1 drogues, 2 mains; how far open (0..1). */
+  private chute = 0
+  private chuteOpen = 0
+  /** The split screen runs top and bottom in a tall pane (the booster's view rising from the bottom). */
+  private splitTall = false
+  private twinH = 0
   private braking = false
   private rng: Rng
   /** The layer it's flying in (world rows), eased; -1 until the first frame. */
@@ -449,6 +590,14 @@ abstract class LaunchSite extends SkyWorld {
   override ensure(columns: number, rows: number): void {
     super.ensure(columns, rows)
     if (this.pw === columns * 2 && this.ph === rows * 2) return
+    // A new size (another layout, a resized pane) mid-split: the panel was
+    // laid out for the old one, so it closes; the booster is simply home.
+    if (this.twinSite || this.twinDue) {
+      this.twinSite = null
+      this.twinDue = false
+      this.splitW = 0
+      this.boosterHome = true
+    }
     this.pw = columns * 2
     this.ph = rows * 2
     this.pc = new Uint32Array(this.pw * this.ph)
@@ -487,7 +636,33 @@ abstract class LaunchSite extends SkyWorld {
     this.tx = this.bodyPx + tx0
     this.padL = Math.floor((this.ox - 2) / 2)
     this.padR = Math.floor((this.tx + s.towerW + 1) / 2)
+    // Falcon's booster lands on its legs on a landing zone off to the left,
+    // and Starship's Ship splashes down in the sea there: far enough that the
+    // pad is out of sight.
+    this.lz = this.boosterOnly && this.look.catches ? 0 : -2 * Math.ceil((pw - this.ox + 4) / 2)
     if (this.state === 'rest') this.alt = s.mount / 2
+  }
+
+  /** The camera's place along the ground in whole cells' worth of pixels, so the pixels and the cells move together. */
+  private viewX(): number {
+    // With the split screen open, this side's view sits centered in the right-hand part.
+    return 2 * Math.round((this.view - (this.splitTall ? 0 : this.splitW)) / 2)
+  }
+
+  /** Where the Ship or Dragon comes down in the sea, along the ground from the mount (pixels): past Falcon's landing zone. */
+  private seaX(): number {
+    return this.look.catches ? this.lz : 2 * this.lz
+  }
+
+  /** The sea: everything left of this column (cells), halfway out from the land (the pad, or Falcon's landing zone) to where it comes down. */
+  private shore(): number {
+    if (!this.lz || this.boosterOnly) return -1e9
+    return Math.floor((this.ox + (this.seaX() + (this.look.catches ? 0 : this.lz)) / 2) / 2)
+  }
+
+  /** The landing zone's first column (cells). */
+  private lzL(): number {
+    return Math.floor((this.ox + this.lz) / 2)
   }
 
   protected vehicleHeight(): number {
@@ -508,24 +683,40 @@ abstract class LaunchSite extends SkyWorld {
 
   /** The scroll that would put the nose exactly camP pixels below the top. */
   private scrollExact(): number {
-    return (this.apx() + this.spec.fly.h + 2 + Math.round(this.camP) - 2 * this.rows) / 2
+    return (this.apx() + this.topRow() + 2 + this.chuteRoom() + Math.round(this.camP) - 2 * this.rows) / 2
   }
+
+  /** The height above the rocket's bottom (pixels) of the top of what's flying: the camera frames that, not the whole stack. */
+  private topRow(): number {
+    return this.spec.fly.h - this.partRows(this.part)[0]
+  }
+
+  /** Room kept above the nose for Dragon's parachutes, eased in as they open (pixels). */
+  private chuteRoom(): number {
+    return Math.round(this.room)
+  }
+
+  private room = 0
 
   protected override groundFeature(x: number): SceneryCell | undefined {
     this.geo()
-    // Clear ground around the launch site: no trees or houses near the pad.
-    if (x >= this.padL - 3 && x <= this.padR + 3) return undefined
+    // Clear ground around the launch site (and its landing zone): no trees or houses near the pad.
+    if (x >= Math.min(this.padL, this.lzL()) - 3 && x <= this.padR + 3) return undefined
+    // Nothing stands on the sea.
+    if (x < this.shore()) return undefined
     return super.groundFeature(x)
   }
 
   protected override scenery(x: number, y: number, sky: number): SceneryCell | undefined {
     if (y === -1) {
       this.geo()
-      if (x >= this.padL && x <= this.padR) {
+      if (x >= this.padL && x <= this.padR && !this.siteHidden) {
         // Concrete, with the flame trench under the engines.
         const mid = (this.bodyPx + this.spec.bodyW / 2) >> 1
         return x === mid || (this.spec.bodyW > 2 && x === mid - 1) ? TRENCH : PAD
       }
+      if (x < this.shore()) return { glyph: SEA.glyph, fg: mix(SEA.fg, 0x10243c, this.dark), bg: mix(SEA.bg!, 0x0a1628, this.dark) }
+      if (!this.look.catches && this.lz && x >= this.lzL() && x <= this.lzL() + Math.ceil(this.spec.land.w / 2)) return PAD
     }
     return super.scenery(x, y, sky)
   }
@@ -547,7 +738,7 @@ abstract class LaunchSite extends SkyWorld {
     }
     this.geo()
     const scroll = this.scroll
-    const exact = Math.max(0, (this.alt * 2 + this.spec.fly.h + 2 + Math.round(this.camP) - 2 * h) / 2)
+    const exact = Math.max(0, (this.alt * 2 + this.topRow() + 2 + this.chuteRoom() + Math.round(this.camP) - 2 * h) / 2)
     const phi = exact - scroll
     const layer = Math.max(0, this.layer)
     const skyShift = Math.max(0, this.alt - layer)
@@ -561,6 +752,8 @@ abstract class LaunchSite extends SkyWorld {
       svx + svy < 0.7 ? 0 : svx < svy * 0.5 ? GLYPH.vert : svy < svx * 0.4 ? GLYPH.horiz : GLYPH.diag
     const sx = Math.floor(this.starX)
     const sy = Math.floor(this.starY)
+    // The camera's place along the ground, in cells: the ground, clouds and stars slide past with it.
+    const panC = this.viewX() / 2
     const rb = this.rowBg
     rb.length = h
     for (let r = 0; r < h; r++) {
@@ -579,14 +772,14 @@ abstract class LaunchSite extends SkyWorld {
         const i = r * w + x
         // The ground (only ever in the real world below the layer).
         if (real && y <= 0) {
-          const s = this.scenery(x, y, bg)
+          const s = this.scenery(x + panC, y, bg)
           if (s) out.set(i, s.glyph, s.fg, s.bg ?? bg)
           else out.set(i, 0x20, DEFAULT_COLOR, bg)
           continue
         }
         // Climbing into orbit the clouds fade into the darkening sky with it;
         // then every cloud color is snapped to a few steps off the sky (see snap).
-        if (o < 0.98 && this.foldedCloud(x + drift, yf, a, bg)) {
+        if (o < 0.98 && this.foldedCloud(x + drift + panC, yf, a, bg)) {
           const fg = snap(o > 0 ? mix(this.cFg, bg, o) : this.cFg, bg)
           const cb = snap(o > 0 ? mix(this.cBg, bg, o) : this.cBg, bg)
           if (fg !== bg || cb !== bg) {
@@ -595,9 +788,9 @@ abstract class LaunchSite extends SkyWorld {
           }
         }
         if (stars > 0) {
-          const hs = hash(x + sx, r - sy, 7)
+          const hs = hash(x + sx + panC, r - sy, 7)
           if (hs < stars) {
-            const bright = hash(x + sx, r - sy, 8) < 0.5 ? STAR : STAR_DIM
+            const bright = hash(x + sx + panC, r - sy, 8) < 0.5 ? STAR : STAR_DIM
             const glyph = starGlyph || (hs < stars * 0.2 ? GLYPH.star : GLYPH.dot)
             out.set(i, glyph, bright, bg)
             continue
@@ -608,7 +801,43 @@ abstract class LaunchSite extends SkyWorld {
     }
     this.drawMoon(out)
     this.drawVehicle(out, 0)
+    this.drawSplit(out)
     return out
+  }
+
+  /**
+   * The split screen: the twin's view in the left-hand part sliding in from
+   * the left edge (a tall pane: the bottom part, rising from the bottom
+   * edge), and a divider.
+   */
+  private drawSplit(out: Cells): void {
+    const t = this.twinSite
+    const n = Math.round(this.splitW)
+    if (!t || n <= 0) return
+    const src = t.grid()
+    const W = this.columns
+    const H = this.rows
+    // The part of the twin's view shown is centred on its booster, so it's in
+    // sight from the panel's first sliver, the view widening round it.
+    const [fc, fr] = t.focus()
+    if (this.splitTall) {
+      const from = Math.max(0, Math.min(this.twinH - n, Math.round(fr - n / 2)))
+      for (let r = 0; r < n && r < H; r++)
+        for (let x = 0; x < W; x++) {
+          const j = (from + r) * this.twinW + x
+          out.set((H - n + r) * W + x, src.codePoint(j), src.foreground(j), src.background(j))
+        }
+      if (n < H) for (let x = 0; x < W; x++) out.set((H - n - 1) * W + x, GLYPH.horiz, 0x8a9099, 0x14161a)
+      return
+    }
+    const from = Math.max(0, Math.min(this.twinW - n, Math.round(fc - n / 2)))
+    for (let r = 0; r < H; r++) {
+      for (let x = 0; x < n && x < W; x++) {
+        const j = r * this.twinW + from + x
+        out.set(r * W + x, src.codePoint(j), src.foreground(j), src.background(j))
+      }
+      if (n < W) out.set(r * W + n, GLYPH.vert, 0x8a9099, 0x14161a)
+    }
   }
 
   /** The clouds at column x, world row yf, folded into the layer's tiles above anchor a. */
@@ -674,18 +903,40 @@ abstract class LaunchSite extends SkyWorld {
       if (!home && lv >= 2) this.settle(lv, want, catchAlt)
     }
     if (this.layer < 0) this.layer = home ? LAYER[2]! : want
-    // Coming home it lands in the arms.
-    const goal = catchAlt
+    // Falcon: only the booster comes home, onto its legs. Starship: the
+    // booster into the arms (on the split screen's left), the Ship into the sea.
+    const catches = this.look.catches
+    const shipHome = catches && !this.boosterOnly
+    // (The Ship's own bottom at sea level: its sprite's frame sits the booster's height below.)
+    const sea = -(s.fly.h - s.stage) / 2
+    // (Dragon's capsule, the same: its bottom at sea level.)
+    const capSea = -(s.fly.h - (s.capsule ?? 0)) / 2
+    const goal = shipHome ? sea : catches ? catchAlt : rest
+    // Once it's coming home it lands and is stacked again before it can relaunch.
+    const homeward = home || this.returning
+    this.stepTwin()
+    // Asked to launch meanwhile, the ground crew hurry.
+    const hurry = home ? 1 : 3
     const restArm = s.mount + s.grip
     let thrGoal = 0
     let armGoal = restArm
     this.timer++
     this.braking = false
+    if (this.fadeIn < 1) this.fadeIn = Math.min(1, this.fadeIn + 0.06)
+    // From the trunk's jettison on (high and falling fast), so nothing moves when they open.
+    const roomGoal = this.chute || (this.part === 'capsule' && this.state === 'fly') ? (this.tall ? 14 : 4) : 0
+    this.room += Math.max(-0.5, Math.min(0.5, roomGoal - this.room))
 
     switch (this.state) {
       case 'rest':
         this.alt = rest
         this.v = 0
+        if (this.part === 'full') this.returning = false
+        // An empty transporter drives back off.
+        if (Number.isFinite(this.carrierX)) {
+          this.carrierX += 2
+          if (this.ox + this.carrierX - this.viewX() > this.pw + 4) this.carrierX = Number.NaN
+        }
         this.reach = Math.max(0, this.reach - 1 / CLOSE)
         this.service = Math.min(1, this.service + 0.05)
         if (!home) this.go('ignite')
@@ -704,8 +955,21 @@ abstract class LaunchSite extends SkyWorld {
         break
       case 'fly': {
         this.flyTime++
+        // The service arm swings away for flight.
         this.service = Math.max(0, this.service - 0.1)
-        if (!home) {
+        if (this.boosterOnly && !home) {
+          // The split screen's booster falls back through the sky, a layer a
+          // second (the level walking down): the world unfolds above it as it drops.
+          this.v = Math.max(this.v - 0.02, -1)
+          this.alt += this.v
+          this.layer += Math.max(-0.6, Math.min(0.6, want - this.layer))
+          this.unfold()
+          // Super Heavy's boostback, seconds after staging, turns it for the
+          // tower; Falcon's entry burn, high up, takes the edge off the heating.
+          if (catches ? this.flyTime < 136 : this.staged === 4 && this.sinceStage < 14) thrGoal = 0.5
+          break
+        }
+        if (!homeward) {
           // Always climbing: a launch's slow start, then the level's speed, and
           // faster still while it's working up into a higher layer.
           const vGoal = SPEED[lv]! * (1 - 0.8 * this.orbit) + Math.max(0, want - this.layer) * 0.012
@@ -716,12 +980,101 @@ abstract class LaunchSite extends SkyWorld {
           this.layer += Math.max(-rate, Math.min(rate, want - this.layer))
           thrGoal = 1 - this.orbit * (1 - ORBIT_BURN[Math.max(0, lv - 8)]!)
           if (this.tint !== 'normal') thrGoal = Math.max(thrGoal, TINT_BURN)
+          // High enough, the stack separates: the spent booster falls away,
+          // the engines cut a moment, and the upper stage lights.
+          if (this.part === 'full' && this.layer >= SEP_LAYER) this.separate()
+          // In orbit Dragon parts from the second stage, which drifts away (to burn up later).
+          if (s.dragon && this.part === 'upper' && this.orbit > 0.95) {
+            this.part = 'dragon'
+            this.ghost = { part: 'stage2', d: 0, v: -0.02, acc: -0.008, life: 70, max: 70 }
+          }
           break
+        }
+        this.returning = true
+        if (shipHome && this.part === 'upper' && this.burn < 100) {
+          // The Ship comes in: belly-first, tiles down, glowing, falling back
+          // down through the sky (it flips upright only for the landing burn,
+          // below). The camera follows it out over the sea.
+          this.burn++
+          // About 60 degrees (nose high) through the glowing part; flat for the belly-flop below it.
+          const flat = this.burn < 85 ? 0.67 : 1
+          this.flop += Math.max(-0.04, Math.min(0.04, flat - this.flop))
+          thrGoal = 0
+          this.v = Math.max(this.v - 0.03, -1.2)
+          this.alt += this.v
+          this.layer += Math.max(-1.5, Math.min(1.5, (this.burn < 80 ? LAYER[4]! : LAYER[2]!) - this.layer))
+          this.unfold()
+          const step = Math.max(0.4, Math.abs(this.lz - this.pos) / 80)
+          this.pos += Math.max(-step, Math.min(step, this.lz - this.pos))
+          this.view = this.pos
+          break
+        }
+        // Brought home before it staged: it stages now (the booster on the split screen).
+        if (this.part === 'full' && !this.boosterOnly) this.separate()
+        if (s.dragon && (this.part === 'upper' || this.part === 'dragon' || this.part === 'capsule')) {
+          // Dragon comes home: it parts from the second stage (which goes on to
+          // burn up), drops its trunk, comes in heat shield first glowing, opens
+          // its drogues then its four mains, and comes down in the sea. Its next
+          // ride waits at the pad on the tower's arm.
+          this.burn++
+          thrGoal = 0
+          if (this.part === 'upper') {
+            this.part = 'dragon'
+            this.ghost = { part: 'stage2', d: 0, v: -0.03, acc: -0.012, life: 60, max: 60 }
+          }
+          if (this.part === 'dragon' && this.burn > 20) {
+            this.part = 'capsule'
+            this.ghost = { part: 'trunk', d: 0, v: -0.03, acc: -0.015, life: 40, max: 40 }
+          }
+          // Out over the sea, the camera with it.
+          const step = Math.max(0.4, Math.abs(this.seaX() - this.pos) / 60)
+          this.pos += Math.max(-step, Math.min(step, this.seaX() - this.pos))
+          this.view = this.pos
+          // Its offset centre of mass trims it at an angle, heat shield forward, while it's hot.
+          this.lean += Math.max(-0.02, Math.min(0.02, (this.burn > 20 && this.burn < 95 ? -0.3 : 0) - this.lean))
+          if (this.burn < 95) {
+            // Re-entry: falling through the high sky.
+            this.v = Math.max(this.v - 0.03, -1.2)
+            this.alt += this.v
+            this.layer += Math.max(-0.6, Math.min(0.6, LAYER[5]! - this.layer))
+            this.unfold()
+            break
+          }
+          const want = this.burn < 115 ? 1 : 2
+          if (want !== this.chute) {
+            this.chute = want
+            this.chuteOpen = 0
+          }
+          this.chuteOpen = Math.min(1, this.chuteOpen + 0.06)
+          this.v += Math.max(-0.05, Math.min(0.05, (this.chute === 1 ? -0.9 : -0.6) - this.v))
+          this.alt += this.v
+          if (this.layer > LAYER[2]! + 1) {
+            this.layer += Math.max(-1.2, Math.min(1.2, LAYER[2]! - this.layer))
+            this.unfold()
+          } else if (this.alt <= capSea) {
+            this.alt = capSea
+            this.v = 0
+            this.pos = this.view = this.seaX()
+            this.splash = 1
+            this.go('landed')
+          }
+          break
+        }
+        // Falcon's booster flies back across to its landing zone on the way down
+        // (Starship's Ship out over the sea), the camera with it: it stays in
+        // view and the world slides past.
+        if (this.lz) {
+          const framesLeft = Math.max(10, (this.alt - goal) / 0.8)
+          const step = Math.max(0.4, Math.abs(this.lz - this.pos) / framesLeft)
+          this.pos += Math.max(-step, Math.min(step, this.lz - this.pos))
+          this.view = this.pos
         }
         const d = goal - this.alt
         const brakeV = Math.sqrt(2 * DEC * Math.abs(d))
+        // The Ship, still belly-first, flips upright into its landing burn.
+        if (this.flop > 0 && (this.braking || this.v <= -brakeV * 0.9)) this.flop = Math.max(0, this.flop - 0.05)
         if (d > 0) {
-          // A launch: the first second barely moving, then faster and faster.
+          // Below its goal: climb gently back up to it.
           this.v += 0.006 + Math.min(this.flyTime, 120) * 0.0004
           this.v = Math.min(this.v, VMAX, brakeV)
           thrGoal = this.v >= brakeV - 0.01 && d < 4 ? 0.65 : 1
@@ -737,9 +1090,11 @@ abstract class LaunchSite extends SkyWorld {
         if (Math.abs(d) <= Math.abs(this.v) + 0.02 && Math.abs(this.v) < 0.25) {
           this.alt = goal
           this.v = 0
-          this.go('catch')
+          this.pos = this.view = this.lz
+          this.go(shipHome ? 'landed' : catches ? 'catch' : 'landed')
+          if (shipHome) this.splash = 1
         } else this.alt += this.v
-        armGoal = s.armCatch
+        if (catches && !shipHome) armGoal = s.armCatch
         break
       }
       case 'catch':
@@ -750,17 +1105,12 @@ abstract class LaunchSite extends SkyWorld {
         this.reach = Math.min(1, this.timer / CLOSE)
         thrGoal = this.reach < 1 ? 0.45 : 0
         if (this.timer >= CLOSE + 8) this.go('lower')
-        if (!home) this.go('release')
         break
       case 'lower': {
         armGoal = -1
-        if (!home) {
-          this.go('release')
-          break
-        }
         const span = Math.max(0.5, catchAlt - rest)
         const frac = (this.alt - rest) / span
-        this.alt -= Math.max(0.012, span * (0.004 + 0.022 * Math.sin(Math.PI * Math.min(1, frac))))
+        this.alt -= Math.max(0.012, span * (0.004 + 0.022 * Math.sin(Math.PI * Math.min(1, frac)))) * (this.boosterOnly ? 2 : 1)
         if (this.alt <= rest) {
           this.alt = rest
           this.go('release')
@@ -770,14 +1120,137 @@ abstract class LaunchSite extends SkyWorld {
       case 'release':
         armGoal = -1
         this.reach = Math.max(0, this.reach - 1 / CLOSE)
-        thrGoal = this.alt > rest + 0.25 && !home ? 0.8 : 0
-        if (this.reach <= 0) {
-          if (this.alt > rest + 0.25) {
-            this.go('fly')
-            this.flyTime = 60
-          } else this.go('rest')
+        // The split screen's booster just stays on the mount.
+        if (this.reach <= 0) this.go('rest')
+        break
+      case 'landed': {
+        // Down on its legs at the landing zone (the split screen's Falcon
+        // booster: it stays there), or in the sea.
+        this.v = 0
+        if (!shipHome && this.part !== 'capsule') {
+          this.alt = rest
+          break
+        }
+        // In the sea, its parachutes (Dragon's) settling on the water.
+        if (this.chuteOpen > 0) this.chuteOpen = Math.max(0, this.chuteOpen - 0.05)
+        else this.chute = 0
+        if (this.part === 'capsule') {
+          // Dragon: a moment in the spray, then the camera slides back along
+          // the coast to the pad, reset for the next flight.
+          this.alt = capSea
+          if (this.timer * hurry >= 24) {
+            this.service = 1
+            this.go('pan')
+          }
+          break
+        }
+        // The Ship: it tips over onto the water (and goes up in a fireball, as
+        // they do), then a recovery barge comes out from the shore, slides in
+        // under it and lifts it, righted, onto its deck.
+        // (Lying flat, its middle sits this much lower: half its width, not half its length.)
+        const lie = (s.stage / 2 - s.bodyW / 4) / 2
+        if (this.timer * hurry < 30) {
+          this.flop = Math.min(1, this.flop + 0.05 * hurry)
+          this.alt = sea - this.flop * lie
+          if (this.timer === 16 && hurry === 1) this.boom = 1
+          break
+        }
+        if (!Number.isFinite(this.carrierX)) this.carrierX = this.pos + this.pw / 2 + 2 * s.fly.w
+        if (this.carrierX > this.pos) {
+          this.alt = sea - this.flop * lie
+          const speed = Math.min(2 * hurry, Math.max(0.3, (this.carrierX - this.pos) * 0.05 * hurry))
+          this.carrierX = Math.max(this.pos, this.carrierX - speed)
+        } else {
+          this.flop = Math.max(0, this.flop - 0.04 * hurry)
+          this.alt = sea + (1 - this.flop) - this.flop * lie
+          if (this.flop <= 0) this.go('carry')
         }
         break
+      }
+      case 'pan': {
+        // Sliding back from the capsule bobbing in the sea to the pad.
+        this.alt = capSea
+        const speed = Math.min(4 * hurry, Math.max(0.6, Math.abs(this.view) * 0.05 * hurry))
+        this.view += Math.max(-speed, Math.min(speed, -this.view))
+        if (Math.abs(this.view) < 0.5) this.resetToPad()
+        break
+      }
+      case 'carry': {
+        // The Ship carried back to the pad, the camera with it, on a barge then
+        // a transporter, to beside the booster waiting on the mount.
+        const to = s.bodyL - 3 - s.fly.w
+        this.alt = sea + 1
+        const speed = Math.min(2.5 * hurry, Math.max(0.3, Math.abs(to - this.pos) * 0.04 * hurry))
+        this.pos += Math.max(-speed, Math.min(speed, to - this.pos))
+        this.view = this.pos
+        this.carrierX = this.pos
+        if (Math.abs(to - this.pos) < 0.01) {
+          // The arms take it from here: the booster on the mount is what stands now.
+          this.shipX = to
+          this.pos = 0
+          this.alt = rest
+          this.part = 'booster'
+          this.stackOff = 2 - (this.apx() + (s.fly.h - s.stage))
+          this.go('stack')
+          this.phase = 1
+        }
+        break
+      }
+      case 'stack': {
+        // Starship: the Ship rolls in on its transporter; the arms reach over,
+        // grip it, lift it, swing it across onto the booster and let go.
+        this.alt = rest
+        // The camera eases back from where the transporter stopped.
+        this.view += Math.max(-0.5, Math.min(0.5, -this.view))
+        const park = s.bodyL - 3 - s.fly.w
+        const grip = Math.round(s.stage * 0.6)
+        const bottom = this.apx() + (s.fly.h - s.stage)
+        armGoal = bottom + Math.round(this.stackOff) + grip
+        const there = Math.abs(this.armY - armGoal) < 1
+        // Once the arms have it, the transporter drives back off the way it came... left.
+        if (this.phase >= 2 && Number.isFinite(this.carrierX)) {
+          this.carrierX -= 1.5 * hurry
+          if (this.ox + this.carrierX + s.fly.w < this.viewX()) this.carrierX = Number.NaN
+        }
+        switch (this.phase) {
+          case 0:
+            this.shipX += Math.min(1.5 * hurry, park - this.shipX)
+            if (this.shipX >= park) this.phase = 1
+            break
+          case 1:
+            this.armX = this.shipX
+            if (there) this.reach = Math.min(1, this.reach + hurry / CLOSE)
+            if (this.reach >= 1) this.phase = 2
+            break
+          case 2:
+            this.stackOff = Math.min(3, this.stackOff + 0.25 * hurry)
+            if (this.stackOff >= 3 && there) this.phase = 3
+            break
+          case 3:
+            this.shipX += Math.min(0.4 * hurry, -this.shipX)
+            this.armX = this.shipX
+            if (this.shipX >= 0) this.phase = 4
+            break
+          case 4:
+            this.stackOff = Math.max(0, this.stackOff - 0.2 * hurry)
+            if (this.stackOff <= 0) {
+              this.part = 'full'
+              this.phase = 5
+            }
+            break
+          default:
+            this.reach = Math.max(0, this.reach - hurry / CLOSE)
+            if (this.reach <= 0) {
+              this.armX = 0
+              this.returning = false
+              this.boosterHome = false
+              this.burn = 0
+              this.flop = 0
+              this.go('rest')
+            }
+        }
+        break
+      }
     }
 
     // The carriage rides with the rocket while it grips; otherwise it eases to its goal.
@@ -790,7 +1263,7 @@ abstract class LaunchSite extends SkyWorld {
 
     const flying = this.state === 'fly'
     // Into orbit from 8, high enough; out of it as soon as it's asked down.
-    const orbitGoal = flying && !home && lv >= 8 && this.layer > LAYER[8]! - 30 ? 1 : 0
+    const orbitGoal = flying && !homeward && lv >= 8 && this.layer > LAYER[8]! - 30 ? 1 : 0
     this.orbit += Math.max(-0.03, Math.min(0.025, orbitGoal - this.orbit))
     if (this.orbit < 0.001) this.orbit = 0
     // The tilt and speed ease toward the level's: 8 tilted, 9 nearly flat, 10 flat out.
@@ -799,11 +1272,13 @@ abstract class LaunchSite extends SkyWorld {
     this.tilt += Math.max(-0.055, Math.min(0.025, tiltGoal - this.tilt))
     this.orbitSpeed += ((orbitGoal ? ORBIT_SPEED[oi]! : 0) - this.orbitSpeed) * 0.04
     // A tall pane keeps the rocket mid-screen in flight (the ground back in view for the catch).
-    const camGoal =
-      this.tall && flying && (!home || this.alt - catchAlt > 25) ? Math.round(HEADROOM * this.rows * 2) : 0
+    const visible = this.rows - (this.splitTall ? this.splitW : 0)
+    // Headroom above the nose, but never so much the rest of it drops out of the bottom.
+    const headroom = Math.min(Math.round(HEADROOM * visible * 2), Math.max(0, 2 * visible - (s.fly.h - this.partRows(this.part)[0]) - 6))
+    const camGoal = this.tall && flying && (!homeward || this.alt - goal > 25) ? headroom : 0
     this.camP += Math.max(-0.6, Math.min(0.6, camGoal - this.camP))
     // Fold away a tile once the real world below the layer is off the grid.
-    if (flying && !home) {
+    if (flying && !homeward) {
       const a = this.layer - TILE / 2
       while (this.scroll - 1 - a >= 2 * TILE + 1) {
         this.alt -= TILE
@@ -820,6 +1295,14 @@ abstract class LaunchSite extends SkyWorld {
     this.starY += this.starVY
     this.earthX += this.orbit * this.orbitSpeed * 0.45
 
+    // A parted stage slides away along the axis and fades out.
+    const g = this.ghost
+    if (g) {
+      g.v += g.acc
+      g.d += g.v
+      if (--g.life <= 0) this.ghost = null
+    }
+
     this.stepParticles()
   }
 
@@ -833,6 +1316,9 @@ abstract class LaunchSite extends SkyWorld {
     this.layer = layer
     this.service = 0
     this.reach = 0
+    this.part = layer >= SEP_LAYER ? 'upper' : 'full'
+    this.ghost = null
+    this.pos = this.view = 0
     if (lv >= 8) {
       const oi = Math.min(2, lv - 8)
       this.orbit = 1
@@ -842,14 +1328,127 @@ abstract class LaunchSite extends SkyWorld {
     if (this.tall) this.camP = Math.round(HEADROOM * this.rows * 2)
   }
 
+  /**
+   * The stack separates: the upper stage flies on. Falcon's spent booster
+   * falls away; Starship's turns back for the tower, followed on a split
+   * screen (when the grid is wide enough for one; else it's simply home).
+   */
+  private separate(): void {
+    this.part = 'upper'
+    this.thr = 0
+    this.ghost = { part: 'booster', d: 0, v: -0.05, acc: -0.025, life: 48, max: 48 }
+    // The booster turns back: once it's fallen out of frame, a split screen
+    // follows it down (side by side in the band, top and bottom in a tall
+    // pane), when there's room for one; else it's simply home in time.
+    const room = this.tall ? Math.floor(this.rows / 2) >= 12 : Math.floor(this.columns / 2) >= 9
+    if (room) this.twinDue = true
+    else this.boosterHome = true
+  }
+
+  /** Dragon's home: everything back on the pad as it was. */
+  private resetToPad(): void {
+    this.part = 'full'
+    this.pos = this.view = 0
+    this.alt = this.spec.mount / 2
+    this.v = 0
+    this.returning = false
+    this.boosterHome = false
+    this.burn = 0
+    this.chute = 0
+    this.chuteOpen = 0
+    this.room = 0
+    this.lean = 0
+    this.ghost = null
+    this.service = 1
+    this.go('rest')
+  }
+
+  /** Falling through the folded sky: unfold a tile whenever the real world below would come into view. */
+  private unfold(): void {
+    const a = this.layer - TILE / 2
+    while (this.scroll - 1 - a < TILE + 1) {
+      this.alt += TILE
+      for (let i = 0; i < PMAX; i++) this.py[i]! += 2 * TILE
+    }
+  }
+
+  /** Where what's flying is in this site's own grid: the cell at its middle (column, row). */
+  private focus(): [col: number, row: number] {
+    this.geo()
+    const s = this.spec
+    const [r0, r1] = this.partRows(this.part)
+    const col = (this.bodyPx + this.pos + s.bodyW / 2 - this.viewX()) / 2
+    const base = 2 * (this.scroll + this.rows - 2) + 1
+    const row = (base - this.apx() - (s.fly.h - (r0 + r1) / 2)) / 2
+    return [col, row]
+  }
+
+  /** Open the split screen on the booster falling back, high in the sky. */
+  private openTwin(): void {
+    this.splitTall = this.tall
+    const w = this.splitTall ? this.columns : Math.floor(this.columns / 2)
+    const h = this.splitTall ? Math.floor(this.rows / 2) : this.rows
+    const t = this.twin()
+    t.boosterOnly = true
+    t.night = this.night
+    t.tint = this.tint
+    t.strength = 1
+    t.ensure(w, h)
+    t.geo()
+    t.fresh = false
+    t.part = 'booster'
+    t.returning = true
+    t.state = 'fly'
+    t.flyTime = 120
+    // It falls back down through the sky a layer a second, from where it separated.
+    t.staged = 7
+    t.sinceStage = 0
+    t.layer = LAYER[7]!
+    t.alt = t.layer + TILE
+    t.v = -0.6
+    t.service = 0
+    this.twinSite = t
+    this.twinW = w
+    this.twinH = h
+    this.twinDone = 0
+  }
+
+  /** Step the split screen's booster, and open or close the panel around it. */
+  private stepTwin(): void {
+    if (this.twinDue && !this.ghost) {
+      this.twinDue = false
+      this.openTwin()
+    }
+    const t = this.twinSite
+    if (!t) return
+    t.night = this.night
+    t.tint = this.tint
+    t.strength = 1
+    t.step()
+    // Down: on the mount in the arms, or on its legs at the landing zone.
+    if (t.state === 'rest' || t.state === 'landed') this.twinDone++
+    // In over a second; once the booster's been down a moment, out again.
+    const open = this.twinDone < 20
+    const full = this.splitTall ? this.twinH : this.twinW
+    this.splitW += Math.max(-0.6, Math.min(0.6, (open ? full : 0) - this.splitW))
+    if (!open && this.splitW <= 0) {
+      this.splitW = 0
+      this.twinSite = null
+      this.boosterHome = true
+    }
+  }
+
   private go(state: State): void {
     this.state = state
     this.timer = 0
   }
 
-  /** Coming in: legs out, grid fins deployed. */
-  private landing(): boolean {
-    return this.state === 'catch' || this.state === 'lower' || (this.state === 'fly' && this.v < -0.05)
+  /** The booster's look: grid fins out coming home, legs out only for the landing burn and after. */
+  private boosterSprite(): Sprite {
+    const s = this.spec
+    const st = this.state
+    if (this.braking || st === 'landed' || st === 'catch' || st === 'lower' || st === 'release') return s.land
+    return s.fins
   }
 
   private get ramp(): Ramp {
@@ -858,10 +1457,22 @@ abstract class LaunchSite extends SkyWorld {
     return this.look.ramp
   }
 
+  /**
+   * Where the plume leaves what's flying: its bottom (world half-rows), its
+   * center (pixels), and how wide it burns (the upper stage's one engine is narrower).
+   */
+  private nozzle(): [a: number, cx: number, width: number] {
+    const s = this.spec
+    const bottom = this.partRows(this.part)[1]
+    return [this.apx() + (bottom ? s.fly.h - bottom : 0), this.bodyPx + this.pos + s.bodyW / 2 - 0.5, this.part === 'upper' ? 0.6 : 1]
+  }
+
   /** The plume's length this frame, flickering (and sputtering on a failed command). */
   private plumeLen(): number {
-    if (this.thr <= 0) return 0
-    let len = this.spec.plume * this.thr * (0.85 + 0.3 * this.rng.f())
+    const p = this.part
+    // (No plume from the Ship while it's still turning upright.)
+    if (this.thr <= 0 || p === 'dragon' || p === 'capsule' || this.flop > 0.3) return 0
+    let len = this.spec.plume * this.thr * (0.85 + 0.3 * this.rng.f()) * (this.part === 'upper' ? 0.7 : 1)
     if (this.tint === 'smoke' && hash(this.t >> 1, 3, 43) < 0.35) len *= 0.25
     return len
   }
@@ -893,8 +1504,7 @@ abstract class LaunchSite extends SkyWorld {
     }
     const s = this.spec
     const r = this.rng
-    const A = this.apx()
-    const cx = this.bodyPx + s.bodyW / 2 - 0.5
+    const [A, cx] = this.nozzle()
     const scale = this.tall ? 1 : 0.6
     const smoky = this.tint === 'smoke'
     const len = this.thr > 0 ? s.plume * this.thr : 0
@@ -935,15 +1545,21 @@ abstract class LaunchSite extends SkyWorld {
       )
     }
     // Fuelled and waiting: cold vapour venting, sinking as it drifts. More with subagents.
-    const venting = this.state === 'rest' || this.state === 'ignite' || (this.state === 'release' && this.alt <= s.mount / 2)
+    const venting =
+      this.state === 'rest' ||
+      this.state === 'ignite' ||
+      (this.state === 'landed' && this.timer > 30) ||
+      (this.state === 'release' && this.alt <= s.mount / 2)
     if (venting) {
       const p = (0.16 + Math.min(60, this.coverageBoost) * 0.01 + (smoky ? 0.25 : 0)) * (this.tall ? 1 : 0.6)
       const sp = s.fly
+      // A stage on its own vents only from its own tanks.
+      const [from, to] = this.partRows(this.part)
       for (const [col, row, dir] of s.vents) {
-        if (r.f() >= p) continue
+        if (row < from || row >= to || r.f() >= p) continue
         this.spawn(
-          this.ox + col + dir * 0.5,
-          A + (sp.h - 1 - row),
+          this.ox + this.pos + col + dir * 0.5,
+          this.apx() + (sp.h - 1 - row),
           dir * (0.12 + r.f() * 0.3) * (this.tall ? 1 : 0.7),
           -(0.02 + r.f() * 0.05),
           22 + r.f() * 26,
@@ -953,6 +1569,41 @@ abstract class LaunchSite extends SkyWorld {
           0.7,
         )
       }
+    }
+    // The Ship's end at sea: a fireball rolling up off the water.
+    if (this.boom > 0) {
+      if (this.boom < 5)
+        for (let k = 0; k < (this.tall ? 10 : 4); k++) {
+          const hot = r.f()
+          this.spawn(cx + (r.f() - 0.5) * s.stage, 1 + r.f() * 2, (r.f() - 0.5) * 1.2 * scale, 0.2 + r.f() * 0.8, 14 + r.f() * 16, s.puff[0], s.puff[1] * 1.4, hot < 0.3 ? 0xfff2c0 : hot < 0.7 ? 0xff9a2a : 0xd8402a, 1)
+        }
+      this.boom = this.boom > 30 ? 0 : this.boom + 1
+    }
+    // The Ship coming in: plasma streaming up off its belly as it falls.
+    if (this.look.catches && this.part === 'upper' && this.burn > 6 && this.burn < 84 && this.flop > 0.5) {
+      const len = s.stage
+      const mid = this.apx() + (s.fly.h - s.stage) + s.stage / 2
+      for (let k = 0; k < (this.tall ? 4 : 2); k++) {
+        const hot = r.f()
+        this.spawn(cx + (r.f() - 0.5) * len * 2, mid - s.bodyW / 2 - 1 - r.f(), (r.f() - 0.5) * 0.4, 0.5 + r.f() * 1.1, 6 + r.f() * 8, 0.5, 1.2, hot < 0.4 ? 0xff5aa0 : hot < 0.75 ? 0xff7a2a : 0xffc46a, 0.85)
+      }
+    }
+    // Dragon coming in: plasma and sparks streaming back off its heat shield.
+    if (this.part === 'capsule' && this.burn > 28 && this.burn < 88) {
+      const n = this.burn > 40 && this.burn < 75 ? 4 : 2
+      for (let k = 0; k < n; k++) {
+        const hot = r.f()
+        this.spawn(cx + (r.f() - 0.5) * s.bodyW * 1.5, A + r.f() * 3, (r.f() - 0.5) * 0.6, 0.6 + r.f() * 1.2, 8 + r.f() * 10, 0.5, 1.2, hot < 0.35 ? 0xff5aa0 : hot < 0.7 ? 0xff7a2a : 0xffc46a, 0.9)
+      }
+    }
+    // The Ship coming down in the sea: a burst of spray, then a little wash.
+    if (this.splash > 0) {
+      const n = this.splash < 3 ? (this.tall ? 18 : 8) : this.splash < 40 && r.f() < 0.3 ? 1 : 0
+      for (let k = 0; k < n; k++) {
+        const side = r.f() < 0.5 ? -1 : 1
+        this.spawn(cx + side * (s.bodyW / 2 + r.f() * 2), 0, side * (0.2 + r.f() * 0.6) * scale, 0.3 + r.f() * (this.tall ? 0.9 : 0.4), 10 + r.f() * 14, 0.6, s.puff[1] * 0.6, 0xeef6ff, 0.9)
+      }
+      this.splash = this.state === 'landed' ? this.splash + 1 : 0
     }
     // A failed command: the climbing rocket coughs dark smoke.
     if (smoky && this.state === 'fly' && this.orbit <= 0.3 && r.f() < 0.4) {
@@ -990,6 +1641,8 @@ abstract class LaunchSite extends SkyWorld {
 
   /** Paint a pixel by its grid-pixel position (row py from the top). */
   private paintP(x: number, py: number, color: number, a: number): void {
+    // World pixels (whole ones: a fraction would index nothing), seen from where the camera is along the ground.
+    x = Math.floor(x) - this.viewX()
     if (x < 0 || x >= this.pw || py < 0 || py >= this.ph || a <= 0.03) return
     const k = py * this.pw + x
     const old = this.pa[k]!
@@ -1010,18 +1663,25 @@ abstract class LaunchSite extends SkyWorld {
     }
   }
 
+  /** Falcon's booster on the split screen is off at its landing zone: no launch site to see. */
+  private get siteHidden(): boolean {
+    return this.boosterOnly && !this.look.catches
+  }
+
   protected drawVehicle(out: Cells, _top: number): void {
     this.geo()
     this.base = 2 * (this.scroll + this.rows - 2) + 1
-    this.drawTower()
-    this.drawMount()
+    if (!this.siteHidden) {
+      this.drawTower()
+      this.drawMount()
+    }
     this.drawEarth(out)
     this.drawParticles()
     if (this.orbit > 0.02) this.drawTiltedPlume()
     else this.drawPlume()
     this.drawRocket()
-    this.drawArms()
-    this.drawLights()
+    if (this.look.catches) this.drawArms()
+    if (!this.siteHidden) this.drawLights()
     this.composite(out)
   }
 
@@ -1112,14 +1772,13 @@ abstract class LaunchSite extends SkyWorld {
     if (len < 0.5) return
     const s = this.spec
     const ramp = this.ramp
-    const A = this.apx()
-    const cx = this.bodyPx + s.bodyW / 2 - 0.5
+    const [A, cx, wk] = this.nozzle()
     // Thin air lets the plume balloon out.
     const spread = 0.08 + Math.min(0.45, this.alt / 180)
     const t = this.t
     for (let d = 0; d < len; d++) {
       const y = A - 1 - d
-      const half = s.bodyW / 2 + d * spread
+      const half = (s.bodyW / 2) * wk + d * spread
       if (y < 0) {
         this.deflect(cx, half, len - d, ramp)
         break
@@ -1156,37 +1815,172 @@ abstract class LaunchSite extends SkyWorld {
   }
 
   /** Where the rocket is drawn: its center (grid pixels), tilt and scale, eased into orbit. */
-  private pose(sp: Sprite): [cx: number, cy: number, tilt: number, scale: number] {
+  private pose(sp: Sprite, posX = this.pos, turned = true): [cx: number, cy: number, tilt: number, scale: number] {
     const o = this.orbit
-    const cx = this.ox + sp.w / 2
+    const cx = this.ox + posX + sp.w / 2
     const cy = this.base - this.apx() - sp.h + 1 + sp.h / 2
+    if (o <= 0 && turned && (this.flop > 0 || this.lean !== 0)) {
+      // Belly-first, tiles down, nose toward the sea (or Dragon leaning into
+      // its entry): turned about the middle of what's flying.
+      const th = -(Math.PI / 2) * this.flop + this.lean
+      const [r0, r1] = this.partRows(this.part)
+      const off = sp.h / 2 - (r0 + r1) / 2
+      const sn = Math.sin(th)
+      const cs = Math.cos(th)
+      return [cx - 2 * off * sn, cy - off + off * cs, th, 1]
+    }
     if (o <= 0) return [cx, cy, 0, 1]
     const k = o * o * (3 - 2 * o)
     // In orbit it sits mid-grid, tilted toward its travel; in the spine the
     // camera pulls back so the whole tilted stack fits the narrow pane.
     const ocx = this.pw / 2 + (this.tall ? 0 : -2)
-    const ocy = this.ph * (this.tall ? 0.42 : 0.36)
+    const ocy = (this.ph - (this.splitTall ? 2 * this.splitW : 0)) * (this.tall ? 0.42 : 0.36)
+    // Shrunk just enough for the tilted stack to fit the pane's width (its right-hand part, split).
+    const room = this.pw - (this.splitTall ? 0 : 2 * this.splitW)
+    const sc = this.tall ? 1 - k * (1 - Math.min(0.85, (room - 7) / (2 * sp.h * Math.max(0.3, Math.sin(this.tilt))))) : 1
+    // Centered on what's flying (after separation, the upper stage), not on the whole stack:
+    // the stage's middle is `off` sprite rows from the sprite's, along its axis.
+    const [r0, r1] = this.partRows(this.part)
+    const off = sp.h / 2 - (r0 + r1) / 2
+    const sn = Math.sin(this.tilt)
+    const cs = Math.cos(this.tilt)
     return [
-      cx + (ocx - cx) * k,
-      cy + (ocy - cy) * k,
+      cx + (ocx - 2 * off * sn * sc - cx) * k,
+      cy + (ocy + off * cs * sc - cy) * k,
       this.tilt,
-      // Shrunk just enough for the tilted stack to fit the pane's width.
-      this.tall ? 1 - k * (1 - Math.min(0.85, (this.pw - 7) / (2 * sp.h * Math.max(0.3, Math.sin(this.tilt))))) : 1,
+      sc,
     ]
   }
 
+  /** The sprite rows a part covers: the upper stage above `stage`, the booster from it down. */
+  private partRows(part: Part): [number, number] {
+    const s = this.spec
+    const dr = s.dragon ?? 0
+    const cap = s.capsule ?? 0
+    switch (part) {
+      case 'upper':
+        return [0, s.stage]
+      case 'booster':
+        return [s.stage, s.fly.h]
+      case 'dragon':
+        return [0, dr]
+      case 'capsule':
+        return [0, cap]
+      case 'trunk':
+        return [cap, dr]
+      case 'stage2':
+        return [dr, s.stage]
+      default:
+        return [0, s.fly.h]
+    }
+  }
+
+  /** The rocket as it flies now, a stage parting from it, and an upper stage being stacked back on. */
   private drawRocket(): void {
     const s = this.spec
-    const sp = this.landing() ? s.land : s.fly
+    const sp = this.part === 'booster' ? this.boosterSprite() : s.fly
+    this.drawBody(sp, this.part, 0, this.part === 'booster' ? this.fadeIn : 1)
+    const g = this.ghost
+    if (g) this.drawBody(s.fly, g.part, g.d, g.life / g.max)
+    const catches = this.look.catches
+    if (this.state === 'pan') {
+      // The next stack, already standing on the pad as the camera slides back to it.
+      this.drawBody(s.fly, 'full', s.mount - this.apx(), 1, 0, true)
+    } else if (catches && this.part === 'upper' && this.boosterHome && this.orbit < 0.01) {
+      // Starship's booster, back on the mount, waiting for the Ship.
+      this.drawBody(s.fly, 'booster', s.mount - this.apx(), 1, 0, true)
+    } else if (catches && this.part === 'booster' && this.state === 'stack') {
+      // The Ship, on its transporter and then in the arms.
+      this.drawBody(s.fly, 'upper', this.stackOff, 1, this.shipX, true)
+    }
+    this.drawCarrier()
+    this.drawChutes()
+  }
+
+  /**
+   * Dragon's parachutes over the capsule, on risers from its nose: two small
+   * drogues, then four striped mains, opening out (and collapsing on the water).
+   */
+  private drawChutes(): void {
+    if (!this.chute || this.chuteOpen <= 0) return
+    const s = this.spec
+    const k = this.chuteOpen
+    const top = this.apx() + s.fly.h - 1
+    const cx = this.ox + this.pos + s.bodyL + s.bodyW / 2 - 0.5
+    const mains = this.chute === 2
+    const tall = this.tall
+    const rise = Math.round((mains ? (tall ? 9 : 3) : tall ? 5 : 2) * (0.5 + 0.5 * k))
+    const spread = mains ? (tall ? [-6, -2, 2, 6] : [-1.5, 1.5]) : tall ? [-2, 2] : [0]
+    const half = Math.max(1, Math.round((mains ? (tall ? 2 : 1.5) : 1) * k))
+    const riser = 0xc2c7cf
+    for (const off of spread) {
+      const x = Math.round(cx + off * k)
+      const y = top + rise
+      // The risers, from the nose up to the canopy's edge.
+      if (tall)
+        for (let i = 1; i < rise; i++) {
+          const f = i / rise
+          this.paint(Math.round(cx + (x - cx) * f), top + i, riser, 0.7)
+        }
+      // The canopy: a dome, its gores in white and orange.
+      for (let dx = -half; dx <= half; dx++) {
+        const c = mains && (x + dx) % 2 ? 0xe8642a : 0xf2f3f5
+        this.paint(x + dx, y, c, 1)
+        if (Math.abs(dx) < half || half === 1) this.paint(x + dx, y + 1, c, 1)
+      }
+    }
+  }
+
+  /**
+   * The Ship's ride home, two pixels tall under it: on the sea a barge (dark
+   * hull, deck, a wheelhouse at its stern), on land a transporter (a flatbed
+   * on wheels).
+   */
+  private drawCarrier(): void {
+    const cx = this.carrierX
+    if (!Number.isFinite(cx)) return
+    const s = this.spec
+    const x0 = Math.round(this.ox + cx + s.bodyL - 3)
+    const x1 = x0 + s.bodyW + 5
+    const sea = Math.floor((x0 + x1) / 4) < this.shore()
+    for (let x = x0; x <= x1; x++) {
+      this.paint(x, 1, sea ? 0x6a6f78 : 0x7a7f88, 1)
+      if (sea) this.paint(x, 0, 0x2c3036, 1)
+      else if (((x - x0) & 1) === 0) this.paint(x, 0, 0x1a1c20, 1)
+    }
+    if (sea) {
+      this.paint(x1, 2, 0x8a9099, 1)
+      this.paint(x1, 3, 0x8a9099, 1)
+      this.paint(x1 - 1, 2, 0x8a9099, 1)
+    }
+  }
+
+  /** One part of the stack, posed with the rocket, `d` sprite rows further along its axis, faded to `alpha`. */
+  /** `upright`: something standing still on the ground (not turned with what's flying). */
+  private drawBody(sp: Sprite, part: Part, d: number, alpha: number, posX = this.pos, upright = false): void {
+    if (alpha <= 0.03) return
+    const s = this.spec
+    const [r0, r1] = this.partRows(part)
     const frost = this.look.mechazilla && (this.state === 'rest' || this.state === 'ignite')
-    const [cx, cy, th, sc] = this.pose(sp)
+    const [cx0, cy0, th, sc] = this.pose(sp, posX, !upright)
     const cs = Math.cos(th)
     const sn = Math.sin(th)
+    const cx = cx0 + 2 * d * sn * sc
+    const cy = cy0 - d * cs * sc
     // Every grid pixel the rotated sprite might cover, sampled back into the
     // sprite (a pixel is twice as tall as it is wide).
     const rx = Math.ceil((Math.abs(cs) * sp.w / 2 + Math.abs(sn) * sp.h) * sc) + 1
     const ry = Math.ceil((Math.abs(sn) * sp.w / 4 + Math.abs(cs) * sp.h / 2) * sc) + 1
     const inv = 1 / sc
+    // The engines glow while they burn, at the bottom of whatever is flying.
+    const burning = d === 0 && part === this.part && this.thr > 0
+    // Dragon's capsule coming in: its heat shield glowing, then cooling under the parachutes.
+    const heat = (part === 'capsule' || part === 'dragon') && this.burn > 20 && this.burn < 95 ? Math.sin((Math.PI * (this.burn - 20)) / 75) : 0
+    // Falcon's booster just before its entry burn: the engine end warming.
+    const baseHeat = part === 'booster' && this.boosterOnly && !this.look.catches && this.state === 'fly' && this.staged === 5 ? 0.5 : 0
+    // The Ship coming in belly-first: its tiles glowing, the steel above them less.
+    const shipHeat = part === 'upper' && this.look.catches && this.burn > 0 && this.burn < 90 ? Math.sin((Math.PI * this.burn) / 90) : 0
+    const tilesTo = s.bodyL + Math.floor(s.bodyW / 2)
     for (let py = Math.floor(cy - ry); py <= Math.ceil(cy + ry); py++) {
       if (py < 0 || py >= this.ph) continue
       const uy = (py + 0.5 - cy) * 2
@@ -1194,15 +1988,19 @@ abstract class LaunchSite extends SkyWorld {
         const ux = px + 0.5 - cx
         const col = Math.floor((ux * cs + uy * sn) * inv + sp.w / 2)
         const row = Math.floor(((-ux * sn + uy * cs) * inv) / 2 + sp.h / 2)
-        if (col < 0 || col >= sp.w || row < 0 || row >= sp.h) continue
+        if (col < 0 || col >= sp.w || row < r0 || row >= r1) continue
         let c = sp.c[row * sp.w + col]!
         if (c < 0) continue
-        // The engines glow while they burn (blue-white near a full context).
-        if (row === sp.h - 1 && this.thr > 0 && col >= s.bodyL && col < s.bodyL + s.bodyW)
+        // Burning up coming down: glowing hotter from the bottom, its leading end.
+        if (heat > 0) c = mix(c, 0xff7a2a, Math.min(0.9, heat * (0.4 + (0.6 * (row - r0)) / Math.max(1, r1 - r0))))
+        if (shipHeat > 0) c = mix(c, col < tilesTo ? 0xff6a2a : 0xffb070, shipHeat * (col < tilesTo ? 0.85 : 0.35))
+        if (baseHeat > 0 && row >= r1 - 3) c = mix(c, 0xd8402a, baseHeat * (1 - (r1 - 1 - row) / 3))
+        // Blue-white near a full context.
+        if (burning && row === r1 - 1 && col >= s.bodyL && col < s.bodyL + s.bodyW)
           c = mix(c, this.tint === 'blue' ? 0x8cc0ff : 0xffc46a, Math.min(0.95, this.thr * 1.4))
         // Super Heavy frosts over where the cold propellant sits.
         if (frost && row > sp.h * 0.6 && row < sp.h - 2 && hash(col, row, 61) < 0.55) c = mix(c, 0xf4f8fc, 0.6)
-        this.paintP(px, py, c, 1)
+        this.paintP(px, py, c, alpha)
       }
     }
   }
@@ -1217,13 +2015,15 @@ abstract class LaunchSite extends SkyWorld {
     const cs = Math.cos(th)
     const sn = Math.sin(th)
     const ramp = this.ramp
-    // The tail, in units (a pixel is 1 wide, 2 tall), and the axis pointing aft.
-    const tx = cx - sp.h * sn * sc
-    const ty = cy * 2 + sp.h * cs * sc
+    // The tail (the bottom of what's flying), in units (a pixel is 1 wide, 2 tall), and the axis pointing aft.
+    const aft = 2 * this.partRows(this.part)[1] - sp.h
+    const tx = cx - aft * sn * sc
+    const ty = cy * 2 + aft * cs * sc
     const L = len * 2 * sc
+    const wk = this.nozzle()[2]
     for (let d = 0.5; d < L; d += 1) {
       const k = d / L
-      const half = (s.bodyW / 2) * sc + d * 0.12
+      const half = (s.bodyW / 2) * wk * sc + d * 0.12
       for (let e = -half; e <= half; e += 0.75) {
         const x = Math.floor(tx - sn * d + cs * e)
         const y = Math.floor((ty + cs * d + sn * e) / 2)
@@ -1278,7 +2078,7 @@ abstract class LaunchSite extends SkyWorld {
     const ay = Math.round(this.armY)
     const start = this.tx - 1
     // Mechazilla's chopsticks reach well past the booster.
-    const tip = this.bodyPx - 1 - (this.look.mechazilla && this.tall ? 2 : 0)
+    const tip = this.bodyPx + this.armX - 1 - (this.look.mechazilla && this.tall ? 2 : 0)
     const full = start - tip + 1
     const len = s.armStub + Math.round(this.reach * (full - s.armStub))
     const col = this.look.arm
@@ -1347,6 +2147,11 @@ export class Falcon extends LaunchSite {
     carriage: 0x7d848e,
     ramp: RAMPS.merlin,
     mechazilla: false,
+    catches: false,
+  }
+
+  protected twin(): LaunchSite {
+    return new Falcon(this.t)
   }
 }
 
@@ -1358,5 +2163,26 @@ export class Starship extends LaunchSite {
     carriage: 0x8a9099,
     ramp: RAMPS.raptor,
     mechazilla: true,
+    catches: true,
+  }
+
+  protected twin(): LaunchSite {
+    return new Starship(this.t + 1)
   }
 }
+
+export const falconScene = defineScene({
+  name: 'falcon',
+  aliases: ['rocket'],
+  blurb: 'a Falcon 9 carrying Dragon: its booster lands on its legs, Dragon comes home under parachutes to a splashdown',
+  night: true,
+  make: seed => new Falcon(seed),
+})
+
+export const starshipScene = defineScene({
+  name: 'starship',
+  aliases: ['spaceship'],
+  blurb: "a bigger rocket that hot-stages: its booster is caught by the tower's arms, the Ship splashes down",
+  night: true,
+  make: seed => new Starship(seed),
+})

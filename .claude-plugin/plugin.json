@@ -1,7 +1,7 @@
 {
   "name": "flow",
   "version": "0.7.0",
-  "description": "Ambient scenes above the prompt that move with your agent's work: a fire, a river, bubbles, a liquid lamp, surf, ski, rockets, a hot-air balloon and more, by day or night. /flow to control it.",
+  "description": "Ambient scenes above the prompt that move with your agent's work: a fire, bubbles, surf, ski, rockets, a hot-air balloon and more, by day or night. /flow to control it.",
   "author": {
     "name": "Rob Macrae"
   },
@@ -31,21 +31,19 @@
     "style": {
       "type": "string",
       "title": "Scene",
-      "description": "fire: a ░▒▓█ fire with sparks and smoke; warp: stars that speed up to hyperspace; colony: a colony ship whose shield burns up the asteroids that hit it; balloon: a hot-air balloon that climbs from the grass to space; engine: a steampunk engine that runs up to full speed; falcon / starship: rockets that launch from the pad and are caught by the tower on the way down; surf: a surfer and the swell; ski: a skier down the mountain; river: a river running past; bubbles: bubbles fizzing up; lava: liquid churning in a lamp",
+      "description": "fire: a ░▒▓█ fire with sparks and smoke; warp: stars that speed up to hyperspace; avalon: a colony ship whose shield burns up the asteroids that hit it; balloon: a hot-air balloon that climbs from the grass to space; engine: a steampunk engine that runs up to full speed; falcon: a Falcon 9 carrying Dragon: its booster lands on its legs, Dragon comes home under parachutes to a splashdown; starship: a bigger rocket that hot-stages: its booster is caught by the tower's arms, the Ship splashes down; surf: a surfer and the swell; ski: a skier down the mountain; bubbles: bubbles fizzing up",
       "default": "fire",
       "options": [
         "fire",
         "warp",
-        "colony",
+        "avalon",
         "balloon",
         "engine",
         "falcon",
         "starship",
         "surf",
         "ski",
-        "river",
-        "bubbles",
-        "lava"
+        "bubbles"
       ]
     },
     "idle": {
@@ -77,7 +75,7 @@
     "time": {
       "type": "string",
       "title": "Day or night",
-      "description": "For balloon, falcon, starship, surf, ski, river and bubbles: clock follows your local time (night from 19:00 to 7:00); day or night pins it",
+      "description": "For balloon, falcon, starship, surf, ski and bubbles: clock follows your local time (night from 19:00 to 7:00); day or night pins it",
       "default": "clock",
       "options": [
         "clock",

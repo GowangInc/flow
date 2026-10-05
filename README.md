@@ -1,10 +1,10 @@
 # flow
 
-Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, a river, fizzing bubbles, a liquid lamp, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, and a colony ship behind its shield. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
+Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, and a colony ship behind its shield. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
 
 By Rob Macrae.
 
-Each scene is drawn in 24-bit color from Unicode block, quadrant and braille characters, so several pixels share each terminal cell.
+Each scene is drawn in 24-bit color from Unicode block, quadrant and braille characters, so several pixels share each terminal cell. In the Claude desktop app, which has no character grid to draw into, the same frames are drawn as images.
 
 ## Install
 
@@ -15,6 +15,8 @@ Each scene is drawn in 24-bit color from Unicode block, quadrant and braille cha
 /plugin install flow@robdmac
 /reload-plugins
 ```
+
+**Claude desktop**, in the Code tab: click **+** next to the prompt box, then **Plugins** → **Add plugin**, add the marketplace `robdmac/flow` and install **flow**. Manage it later from **+** → **Plugins** → **Manage plugins**. The desktop app and Claude Code share their plugins, so if you've installed Flow in the terminal it's already there. It runs in local sessions, not cloud ones.
 
 **pi**, from your shell:
 
@@ -32,17 +34,17 @@ Every scene has a level from 0 (off) to 10 (as busy as it gets).
 |---|---|---|
 | `fire` | a low glow of embers | a roaring fire throwing sparks |
 | `warp` | stars drifting past | hyperspace streaks |
-| `colony` | a colony ship among still stars, its habitat turning, the odd rock burning up on its shield | stars streaking past, rocks flaring on the shield every second |
+| `avalon` | a colony ship among still stars, its habitat turning, the odd rock burning up on its shield | stars streaking past, rocks flaring on the shield every second |
 | `balloon` | a hot-air balloon on the grass | up through the clouds to the edge of space |
 | `engine` | a steampunk engine standing still | cogs, belts and pistons at full speed |
-| `falcon`, `starship` | the rocket on its pad | climbing through the sky (2–7), then in orbit (8–10); coming down, the tower's arms catch it |
+| `falcon`, `starship` | the rocket on its pad | climbing through the sky (2–7), separating at about 7, the upper stage in orbit (8–10); as it stages the screen splits, one side following the booster back down (falcon's lands on its legs, starship's is caught by the tower's arms), the other staying with the upper stage; brought home, falcon's Dragon capsule comes down under parachutes to a splashdown and the view slides back to the pad, and starship's Ship splashes down at sea and is carried back for the arms to lift on |
 | `surf` | a glassy sea at dawn | big barrelling waves |
 | `ski` | an easy run | a steep mogul run at speed |
-| `river` | a kayak drifting on glassy water | white-water rapids, spray off the bow |
 | `bubbles` | a couple of lazy strings of bubbles | a rolling, fizzing boil |
-| `lava` | a few glowing blobs drifting in a liquid lamp | the liquid thrashing: blobs stretching, colliding, sloshing |
 
-Balloon, falcon, starship, surf, ski and river also have a **night** version: stars, a moon, and moonlit snow or water. By night, bubbles turns into a stout: pale tan bubbles rising through black. By default day and night follow your local clock (night is 19:00 to 7:00). `/flow day` or `/flow night` pins one.
+Some scenes also answer to other names: `inferno` and `flame` (fire), `stars` (warp), `colony` and `interstellar` (avalon), `mechanism` (engine), `rocket` (falcon), `spaceship` (starship), `ocean` and `sea` (surf), `snow` (ski).
+
+Balloon, falcon, starship, surf and ski also have a **night** version: stars, a moon, and moonlit snow or water. By night, bubbles turns into a stout: pale tan bubbles rising through black. By default day and night follow your local clock (night is 19:00 to 7:00). `/flow day` or `/flow night` pins one.
 
 ## What moves it (auto mode)
 
@@ -53,8 +55,8 @@ Balloon, falcon, starship, surf, ski and river also have a **night** version: st
 | streaming an answer | keeps going (limited per second, so plain chat sits mid-range) |
 | editing files | pushes higher, scaled by the lines written |
 | running commands | sparks; a slow command keeps it ticking over |
-| running subagents | busier with each one (with diminishing returns); some scenes add company, such as more balloons, kayaks, surfers, skiers or wingmen |
-| hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a capsized kayak |
+| running subagents | busier with each one (with diminishing returns); some scenes add company: more balloons, surfers or skiers, a wider fire, more lights on the launch tower |
+| hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey |
 | near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame |
 
 A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel.
@@ -66,7 +68,7 @@ A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes se
 | Command | Effect |
 |---|---|
 | `/flow` | show the scene, mode, level and time of day |
-| `/flow <scene>` | pick a scene (`/flow surf`) |
+| `/flow <scene>` | pick a scene by name or alias (`/flow surf`, `/flow sea`) |
 | `/flow next` | the next scene |
 | `/flow day` / `night` | pin the time of day |
 | `/flow clock` | day or night by your local clock (the default) |
@@ -74,7 +76,7 @@ A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes se
 | `/flow auto` | move with the agent's work (the default) |
 | `/flow 1`–`10` / `off` | hold a fixed level, or switch it off |
 | `/flow idle glow` / `dark` | in auto mode while idle: a low glow (the default), or nothing (the band gives its rows back) |
-| `/flow band` / `spine` | a 5-row band above the prompt (the default), or a tall pane docked beside the transcript |
+| `/flow band` / `spine` | a 5-row band above the prompt (the default; also `horizontal`, `bar` or `flat`), or a tall pane docked beside the transcript (also `portrait`, `vertical` or `side`) |
 | `/flow help` | list all of this |
 
 
@@ -100,7 +102,7 @@ Settings persist in `~/.pi/agent/flow.json`. To try it without installing: `pi -
 
 ## Cost
 
-Flow repaints about 14 times a second while busy and 8 times when calm. It skips unchanged frames and doesn't repaint at all while off screen. The heaviest scene takes under 2 ms per frame.
+Flow repaints about 14 times a second while busy and 8 times when calm. It skips unchanged frames and doesn't repaint at all while off screen. In the desktop app it redraws at most 10 times a second. The heaviest scene takes under 2 ms per frame.
 
 ## Compatibility
 
@@ -113,6 +115,18 @@ claude --plugin-dir .   # load it, with hot reload
 claude plugin validate .
 claude plugin test .
 ```
+
+### Add your own scene
+
+```sh
+npm install
+npm run new-scene -- aurora --blurb "curtains of light that ripple faster with the work" --night
+npm run preview -- aurora    # see it here at levels 1, 5 and 10, as a band and a spine, with each tint
+claude --plugin-dir .        # then /flow aurora
+npm run check                # colour pairs and timing, before you open a pull request
+```
+
+`new-scene` writes `hooks/aurora.ts`: a scene that already moves with the level, shows the tints and (with `--night`) has a night. Edit its `paint()`: it gets a grid of pixels (2 × 2 a terminal cell) and the dials (the level, eased; the frame count; night; the tint; whether it's the tall spine). [AGENTS.md](AGENTS.md) has the rules a scene keeps to.
 
 Every hook file carries a `// REVISION:` marker. On startup the mod writes the loaded revision, the local time and the UTC offset to the debug log (`claude --debug`).
 

@@ -1,4 +1,4 @@
-// REVISION: flow-v66-desktop
+// REVISION: flow-v102-review-fixes
 
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -11,9 +11,12 @@ import { effortOf, piLinesWritten } from '../pi/mapping'
 import { Balloon, skyColor } from '../hooks/balloon'
 import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
-import { makeScene, nextStyle, STYLES } from '../hooks/styles'
+import { makeScene, nextStyle, SCENES, STYLES, styleNamed } from '../hooks/styles'
 import { keepOverrides, writeThrough } from '../hooks/register'
-import { rowRuns } from '../hooks/desktop'
+import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
+import { Cells, isTall } from '../hooks/cells'
+import { SceneDriver } from '../hooks/scene'
+import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -37,14 +40,20 @@ function decode(cells: string): Uint32Array {
 }
 
 /** Stand for the engine beneath the plugin: its band, session start, calls. */
-function engine(on: On, captured: { blits: string[]; config: [string, unknown][] } = { blits: [], config: [] }) {
+function engine(
+  on: On,
+  captured: { blits: string[]; config: [string, unknown][]; invalidates?: number } = { blits: [], config: [] },
+) {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Text } = $.ui.resolve(e)
     return Text({ children: 'engine band' })
   })
   on('session.start', () => ({ cwd: '/tmp' }))
   on('ui.log', () => ({ value: undefined }))
-  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.invalidate', () => {
+    captured.invalidates = (captured.invalidates ?? 0) + 1
+    return { value: undefined }
+  })
   on('command.register', () => ({ value: { command: 'flow' } }))
   on('ui.blit', (_, e) => {
     captured.blits.push(e.requestId)
@@ -166,13 +175,8 @@ test('every style draws a full frame, lit when on and blank when off', async () 
     const off = decode(f.frame())
     for (let i = 0; i < off.length; i += 3) expect(off[i]).toBe(0x20)
   }
-  expect(nextStyle('fire')).toBe('warp')
-  expect(nextStyle('warp')).toBe('colony')
-  expect(nextStyle('colony')).toBe('balloon')
-  expect(nextStyle('balloon')).toBe('engine')
-  expect(nextStyle('starship')).toBe('surf')
-  expect(nextStyle('ski')).toBe('river')
-  expect(nextStyle('lava')).toBe('fire')
+  // `/flow next` walks SCENES in order and wraps round.
+  STYLES.forEach((s, i) => expect(nextStyle(s)).toBe(STYLES[(i + 1) % STYLES.length]!))
 })
 
 test("the fire draws no backgrounds: every cell keeps the terminal's own", async () => {
@@ -534,55 +538,271 @@ test('the band yields to other surfaces, surveys, and a one-row squeeze', async 
   }
 })
 
-test('on desktop the band hands a surface module the dials', async ($, on) => {
+/** Decode a frame's PNG (stored deflate, as svg.ts writes it) back to its pixels. */
+function decodeSvgPng(svg: string): { width: number; height: number; rgba: Uint8Array } {
+  const b64 = /base64,([^"]+)"/.exec(svg)![1]!
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  const view = new DataView(bytes.buffer)
+  expect([...bytes.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  let o = 8
+  let width = 0
+  let height = 0
+  const data: number[] = []
+  while (o < bytes.length) {
+    const length = view.getUint32(o)
+    const type = String.fromCharCode(...bytes.subarray(o + 4, o + 8))
+    const body = bytes.subarray(o + 8, o + 8 + length)
+    if (type === 'IHDR') {
+      width = view.getUint32(o + 8)
+      height = view.getUint32(o + 12)
+    } else if (type === 'IDAT') {
+      let k = 2
+      for (;;) {
+        const final = body[k]! & 1
+        const n = body[k + 1]! | (body[k + 2]! << 8)
+        for (let j = 0; j < n; j++) data.push(body[k + 5 + j]!)
+        k += 5 + n
+        if (final) break
+      }
+    }
+    o += 12 + length
+  }
+  const rgba = new Uint8Array(width * height * 4)
+  for (let y = 0; y < height; y++) {
+    expect(data[y * (width * 4 + 1)]).toBe(0) // no filter
+    rgba.set(data.slice(y * (width * 4 + 1) + 1, (y + 1) * (width * 4 + 1)), y * width * 4)
+  }
+  return { width, height, rgba }
+}
+
+test('on desktop the band is one Svg sized to its cells', async ($, on) => {
   mock.clock(on)
   mock.store(on)
   engine(on)
   await start($)
   const ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...BAND })
-  const client = await ui.find({ type: 'Client', key: 'flow' })
-  expect(client?.props.module).toBe('hooks/desktop.tsx')
-  expect(client?.props.height).toBe(5)
-  expect((client?.props.props as { style: string }).style).toBe('fire')
-  // The module steps the scene on its own clock and draws rows of colored runs.
-  await ui.resize({ columns: 60, rows: 5 })
-  await ui.advance(1000)
-  const runs = await ui.findAll({ type: 'Text', in: 'flow' })
-  expect(runs.length).toBeGreaterThan(5)
+  const svg = await ui.find({ type: 'Svg' })
+  expect(svg?.props.width).toBe(60 * 8)
+  expect(svg?.props.height).toBe(5 * 19)
+  const png = decodeSvgPng(svg?.props.source as string)
+  expect([png.width, png.height]).toEqual([120, 20]) // 2 x 4 pixels a cell
   await ui.unmount()
 })
 
-test('desktop: a big region at full tilt stays inside the tree bounds', { options: { style: 'river', mode: 'manual', level: 10 } }, async ($, on) => {
-  mock.clock(on)
-  mock.store(on)
-  engine(on)
-  await start($)
-  for (const [columns, rows] of [[250, 5], [40, 120]] as const) {
-    const ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...BAND })
-    await ui.resize({ columns, rows })
-    await ui.advance(3000)
-    const size = JSON.stringify(await ui.drawn({ in: 'flow' })).length
-    expect(size).toBeLessThan(100_000)
-    await ui.unmount()
-  }
-})
-
-test('desktop: each row as runs that fill its width, full blocks drawn as their color', async () => {
+test('desktop: every scene, in every size, fits the Svg limit and decodes to its grid', async () => {
   for (const style of STYLES) {
-    const s = makeScene(style, 7)
-    s.strength = 8
-    s.ensure(40, 5)
-    for (let i = 0; i < 20; i++) s.step()
-    const grid = s.grid()
-    for (let r = 0; r < grid.rows; r++) {
-      const runs = rowRuns(grid, r)
-      expect([...runs.map(x => x.text).join('')].length).toBe(40)
-      expect(runs.some(x => x.text.includes('\u2588'))).toBe(false)
+    for (const [columns, rows] of [[250, 5], [41, 45], [40, 120]] as const) {
+      const s = makeScene(style, 7)
+      s.strength = 10
+      s.coverageBoost = 60
+      s.ensure(columns, rows)
+      for (let i = 0; i < 20; i++) s.step()
+      const grid = s.grid()
+      const svg = frameSvg(grid)
+      expect(svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+      const png = decodeSvgPng(svg)
+      expect(png.width % columns).toBe(0)
+      expect(png.height % rows).toBe(0)
+      // A full block's pixels are its color, opaque.
+      const sx = png.width / columns
+      const sy = png.height / rows
+      for (let i = 0; i < columns * rows; i++) {
+        if (grid.codePoint(i) !== 0x2588) continue
+        const o = (Math.floor(i / columns) * sy * png.width + (i % columns) * sx) * 4
+        const fg = grid.foreground(i)
+        expect([...png.rgba.subarray(o, o + 4)]).toEqual([(fg >> 16) & 255, (fg >> 8) & 255, fg & 255, 255])
+        break
+      }
     }
   }
 })
 
-test("a desktop client drawing its band doesn't freeze the terminal's scene", async ($, on) => {
+test('a pane wider than it is tall still gets the tall layouts, not the 5-row band\'s', () => {
+  expect(isTall(250, 5)).toBe(false) // the band
+  expect(isTall(13, 30)).toBe(true) // the spine
+  expect(isTall(76, 45)).toBe(true) // a desktop pane dragged wide
+})
+
+test('desktop: quadrants, eighths, shades and braille land on their own pixels', () => {
+  expect(coverage(0x2598)).toBe(0b00000101) // upper left quadrant: x0 of rows 0-1
+  expect(coverage(0x2584)).toBe(0b11110000) // lower half
+  expect(coverage(0x2582)).toBe(0b11000000) // lower quarter: the bottom row
+  expect(coverage(0x258c)).toBe(0b01010101) // left half: the left column
+  expect(coverage(0x2801)).toBe(0b00000001) // braille dot 1, top left
+  expect(coverage(0x2880)).toBe(0b10000000) // braille dot 8, bottom right
+  expect(coverage(0x41)).toBe(-1) // a letter: no block shape
+})
+
+test('PixelScene: paints pixels into glyphs, leaves the rest clear, lays specks over, blanks at 0', () => {
+  let seen: Dials | undefined
+  class Probe extends PixelScene {
+    paint(px: Painter, d: Dials) {
+      seen = d
+      px.rect(0, 0, 2, 2, 0xff0000) // cell 0: all red
+      px.set(0, 2, 0x00ff00) // cell 4 (row 1): one green pixel, top left
+      px.dot(5, 1, 0xffffff) // cell 2: a speck
+    }
+  }
+  const s = new Probe()
+  s.strength = 5
+  s.ensure(4, 3)
+  s.step()
+  const g = s.grid()
+  expect(g.codePoint(0)).toBe(0x20) // one flat color: a space on that background
+  expect(g.background(0)).toBe(0xff0000)
+  expect(g.codePoint(4)).toBe(0x2598) // ▘ green, the rest the terminal's
+  expect(g.foreground(4)).toBe(0x00ff00)
+  expect(g.background(4)).toBe(DEFAULT)
+  expect(g.codePoint(2)).toBe(0x2800 | 0x10) // braille dot at column 1, row 1
+  expect(g.codePoint(1)).toBe(0x20) // untouched: blank, the terminal's own
+  expect(g.background(1)).toBe(DEFAULT)
+  expect(seen?.level).toBe(5)
+  expect(seen?.tall).toBe(false)
+  // The level glides toward a new dial rather than jumping...
+  s.strength = 10
+  s.step()
+  expect(s.grid() && seen!.level).toBeGreaterThan(5)
+  expect(seen!.level).toBeLessThan(6)
+  // ...but 0 is off at once.
+  s.strength = 0
+  const off = s.grid().words
+  for (let i = 0; i < off.length; i += 3) expect(off[i]).toBe(0x20)
+})
+
+test('every scene has a unique lowercase name, a blurb, and builds', () => {
+  expect(new Set(STYLES).size).toBe(STYLES.length)
+  for (const d of SCENES) {
+    expect(d.name).toMatch(/^[a-z][a-z0-9-]*$/)
+    expect(d.blurb.length).toBeGreaterThan(0)
+    expect(styleNamed(d.name)).toBe(d.name)
+    for (const a of d.aliases ?? []) expect(styleNamed(a)).toBe(d.name)
+    const s = makeScene(d.name, 1)
+    s.ensure(40, 5)
+    s.step()
+    expect(s.grid().columns).toBe(40)
+  }
+})
+
+test('desktop: shades fill the whole cell, blended, rather than a dither', () => {
+  const g = new Cells(1, 1)
+  g.set(0, 0x2592, 0xff8800, DEFAULT) // ▒ over the terminal's own color
+  const { rgba } = gridPixels(g, 2, 4)
+  for (let i = 0; i < 8; i++) expect([...rgba.subarray(i * 4, i * 4 + 4)]).toEqual([0xff, 0x88, 0x00, 140])
+  g.set(0, 0x2591, 0xffffff, 0x000000) // ░ over black: a dim grey
+  expect([...gridPixels(g, 2, 4).rgba.subarray(0, 4)]).toEqual([77, 77, 77, 255])
+})
+
+test('desktop: the smaller pixel sizes blend what they cover, so sparse glyphs dim rather than vanish', () => {
+  const lit = (cp: number, sx: number, sy: number) => {
+    const g = new Cells(1, 1)
+    g.set(0, cp, 0xff8800, DEFAULT)
+    const { rgba } = gridPixels(g, sx, sy)
+    let n = 0
+    for (let i = 3; i < rgba.length; i += 4) if (rgba[i]) n++
+    return n
+  }
+  for (const [sx, sy] of [[2, 2], [1, 2], [1, 1]] as const) {
+    expect(lit(0x2591, sx, sy)).toBeGreaterThan(0) // ░
+    expect(lit(0x2801, sx, sy)).toBeGreaterThan(0) // braille dot 1, top left
+    expect(lit(0x2804, sx, sy)).toBeGreaterThan(0) // braille dot 3, row 2
+    expect(lit(0x2590, sx, sy)).toBeGreaterThan(0) // ▐ right half
+    expect(lit(0x2808, sx, sy)).toBeGreaterThan(0) // braille dot 4, right column
+  }
+})
+
+test('desktop: a pane too big for 1 × 2 still draws, at fewer pixels, never blank', () => {
+  for (const [columns, rows] of [[200, 80], [512, 256]] as const) {
+    const g = new Cells(columns, rows)
+    for (let i = 0; i < columns * rows; i++) g.set(i, 0x2588, 0x334455, DEFAULT)
+    const svg = frameSvg(g)
+    expect(svg.length).toBeLessThanOrEqual(SVG_LIMIT)
+    const png = decodeSvgPng(svg)
+    expect(png.width).toBeGreaterThan(columns / 4)
+    expect([...png.rgba.subarray(0, 4)]).toEqual([0x33, 0x44, 0x55, 255])
+  }
+})
+
+test('two drivers on one cfg keep their own scenes, and both follow a change of scene', () => {
+  const cfg = readConfig({ style: 'fire', mode: 'manual', level: 10 })
+  const activity = new Activity()
+  const terminal = new SceneDriver(cfg, activity)
+  const desktop = new SceneDriver(cfg, activity)
+  expect(terminal.scene).not.toBe(desktop.scene)
+  terminal.dial().ensure(120, 5)
+  desktop.dial().ensure(76, 45)
+  for (let i = 0; i < 40; i++) {
+    terminal.dial().step()
+    desktop.dial().step()
+  }
+  // Each kept its own size, so neither was rebuilt: the terminal's fire has built up.
+  const words = terminal.scene.grid().words
+  let lit = 0
+  for (let i = 0; i < words.length; i += 3) if (words[i] !== 0x20) lit++
+  expect(lit).toBeGreaterThan(50)
+  terminal.apply({ style: 'surf' })
+  expect(terminal.scene).toBe(terminal.sceneFor('surf'))
+  expect(desktop.scene).toBe(desktop.sceneFor('surf'))
+  expect(terminal.scene).not.toBe(desktop.scene)
+})
+
+test('a desktop view that stops rendering (its window closed) is forgotten: no more redraws asked for', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  const desk = await $.ui.mount({ plugin: 'flow', surface: 'desktop', requestId: 'desk', ...BAND })
+  seen.invalidates = 0
+  await clock.advance(1000)
+  expect(seen.invalidates).toBeGreaterThan(5) // while it's there, every frame asks for a redraw
+  await desk.unmount()
+  await clock.advance(5000)
+  seen.invalidates = 0
+  await clock.advance(3000)
+  expect(seen.invalidates).toBeLessThan(2)
+})
+
+test('rockets: a new size while the split screen is open closes it cleanly (no garbage cells)', () => {
+  const f = makeScene('starship', 3)
+  f.strength = 1
+  f.ensure(120, 5)
+  for (let i = 0; i < 30; i++) f.step()
+  let open = false
+  for (let i = 0; i < 600 && !open; i++) {
+    f.strength = 10
+    f.step()
+    f.grid()
+    open = (f as unknown as { splitW: number }).splitW > 2
+  }
+  expect(open).toBe(true)
+  f.ensure(18, 50)
+  for (let i = 0; i < 5; i++) {
+    f.strength = 10
+    f.step()
+    const w = f.grid().words
+    for (let k = 0; k < w.length; k += 3) expect(w[k]).toBeGreaterThan(0)
+  }
+})
+
+test("a pending scene under an old name (colony) is written through as its new one (avalon), not dropped", async () => {
+  const store = new Map<string, unknown>([['overrides', { style: 'colony' }]])
+  const config: Record<string, unknown> = {}
+  const session = {
+    store: {
+      get: async (k: string) => structuredClone(store.get(k)),
+      set: async (k: string, v: unknown) => store.set(k, structuredClone(v)),
+      delete: async (k: string) => store.delete(k),
+    },
+    config: {
+      set: async ({ key, value }: { key: string; value: unknown }) => ((config[key] = value), { value }),
+    },
+  } as never
+  await writeThrough(session)
+  expect(config['flow.style']).toBe('avalon')
+})
+
+test("a desktop view of the band doesn't stop the terminal's blits", async ($, on) => {
   const clock = mock.clock(on)
   mock.store(on)
   const seen = engine(on)
@@ -744,6 +964,9 @@ test('every style fills a tall spine', async () => {
 test('settings: layout parses, toggles, and shows', async () => {
   expect(parseFlowArgs('spine')).toEqual({ kind: 'layout', layout: 'spine' })
   expect(parseFlowArgs('layout band')).toEqual({ kind: 'layout', layout: 'band' })
+  for (const w of ['horizontal', 'bar', 'flat']) expect(parseFlowArgs(w)).toEqual({ kind: 'layout', layout: 'band' })
+  for (const w of ['portrait', 'vertical', 'side']) expect(parseFlowArgs(w)).toEqual({ kind: 'layout', layout: 'spine' })
+  expect(parseFlowArgs('layout vertical')).toEqual({ kind: 'layout', layout: 'spine' })
   expect(parseFlowArgs('layout sideways').kind).toBe('error')
   const cfg = readConfig({ layout: 'spine' })
   expect(cfg.layout).toBe('spine')
@@ -769,7 +992,7 @@ test('balloon: a rebuilt balloon (a settings reload) resumes in the air, not on 
   expect(after.altitude).toBeGreaterThan(cruising) // a bad saved value is ignored
 })
 
-test('colony: the ship coasts among still stars at 1; at 10 the stars blur past in streaks', async () => {
+test('avalon: the ship coasts among still stars at 1; at 10 the stars blur past in streaks', async () => {
   const streaks = (level: number) => {
     const c = new Colony(4)
     c.ensure(90, 5)
@@ -796,7 +1019,9 @@ test('colony: the ship coasts among still stars at 1; at 10 the stars blur past 
 test('settings: starfield is now warp; the old name still works', async () => {
   expect(readConfig({ style: 'starfield' }).style).toBe('warp')
   expect(parseFlowArgs('style starfield')).toEqual({ kind: 'style', name: 'warp' })
-  expect(parseFlowArgs('style colony')).toEqual({ kind: 'style', name: 'colony' })
+  expect(parseFlowArgs('style colony')).toEqual({ kind: 'style', name: 'avalon' })
+  expect(parseFlowArgs('interstellar')).toEqual({ kind: 'style', name: 'avalon' })
+  expect(parseFlowArgs('sea night')).toEqual({ kind: 'style', name: 'surf', time: 'night' })
 })
 
 test('balloon: a sky behind it, day blue low down, darkening into the black of space', async () => {

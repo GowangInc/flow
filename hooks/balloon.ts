@@ -1,4 +1,4 @@
-// REVISION: flow-v42-renderer-polish
+// REVISION: flow-v81-scene-defs
 //
 // A hot-air balloon in the sky world (sky.ts): the level is its target
 // altitude. At 1 it sits on the grass among trees and houses; it climbs past
@@ -12,6 +12,7 @@
 import type { Cells } from './cells'
 import { g, hash, mix } from './pixels'
 import { skyColor, SkyWorld } from './sky'
+import { defineScene } from './scene-def'
 
 export { skyColor }
 
@@ -116,3 +117,10 @@ export class Balloon extends SkyWorld {
     }
   }
 }
+
+export const balloonScene = defineScene({
+  name: 'balloon',
+  blurb: 'a hot-air balloon that climbs from the grass to space',
+  night: true,
+  make: seed => new Balloon(seed),
+})

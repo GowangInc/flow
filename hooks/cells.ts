@@ -1,4 +1,4 @@
-// REVISION: flow-v58-no-pixels
+// REVISION: flow-v75-tall-by-rows
 //
 // Shared by the styles: a small PRNG and the cell grid every harness draws
 // from (packed for Claude Code's Raster, rendered as ANSI lines for pi).
@@ -24,6 +24,16 @@ export class Rng {
   f(): number {
     return this.int() / 0x1_0000_0000
   }
+}
+
+/**
+ * Whether a region gets a scene's tall layout (the spine's, a pane's) rather
+ * than its band layout. By rows, not by shape: the band layouts are made for
+ * the 5-row band, and a pane wider than it is tall (a desktop pane dragged
+ * wide) is still far too tall for them.
+ */
+export function isTall(columns: number, rows: number): boolean {
+  return rows > 8 || rows > columns
 }
 
 /** The terminal's own color (Raster's bit-24 marker): transparent. */
