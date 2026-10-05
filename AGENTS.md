@@ -7,7 +7,7 @@ Flow: ambient terminal scenes that move with a coding agent's work. One codebase
 ```
 .claude-plugin/
   plugin.json        the plugin: name, version, userConfig rows (/config)
-  marketplace.json   the marketplace (rob-macrae-mods); its one plugin is this repo ("./")
+  marketplace.json   the marketplace (robdmac); its one plugin is this repo ("./")
   types/             written by Claude Code on each load (gitignored): the mod API's types
 hooks/
   hooks.json         { "modules": ["./register.tsx"] }

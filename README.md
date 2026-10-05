@@ -12,7 +12,7 @@ Each scene is drawn in 24-bit color from Unicode block, quadrant and braille cha
 
 ```
 /plugin marketplace add robdmac/flow
-/plugin install flow@rob-macrae-mods
+/plugin install flow@robdmac
 /reload-plugins
 ```
 
