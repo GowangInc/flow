@@ -2,6 +2,8 @@
 
 Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, and a colony ship behind its shield. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
 
+https://github.com/user-attachments/assets/aad7c890-f275-4329-8715-58e3c0f1ec04
+
 By Rob Macrae.
 
 Each scene is drawn in 24-bit color from Unicode block, quadrant and braille characters, so several pixels share each terminal cell. In the Claude desktop app, which has no character grid to draw into, the same frames are drawn as images.
