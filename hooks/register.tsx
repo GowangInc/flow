@@ -1,4 +1,4 @@
-// REVISION: flow-v118-spine-hides
+// REVISION: flow-v119-sound-gen
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -278,12 +278,21 @@ export const register: Register = (on, options) => {
     seen: 0,
     /** When each kind of event with a clip of its own may play next (a closer one waits till then). */
     nextOf: new Map<string, number>(),
+    /** Bumped whenever the soundscape stops (a new scene, sound off, hidden): what was scheduled before is stale. */
+    gen: 0,
     /** The event clips playing, oldest first (the first to give way when the player is full). */
     events: [] as AbortController[],
     seed: 1,
     scene: '',
   }
+  /**
+   * Whether what was scheduled in generation `gen` may still play: the soundscape hasn't stopped since, and
+   * no change waits for the next frame to stop it (another scene picked, the sound turned off).
+   */
+  const current = (gen: number) => sound.gen === gen && cfg.sound === 'on' && cfg.style === sound.scene
   const stopSound = () => {
+    // (A new generation: a delayed event or retry from the soundscape stopped here never plays.)
+    sound.gen++
     for (const c of sound.playing) c.abort()
     sound.playing.clear()
     sound.takes.clear()
@@ -414,18 +423,26 @@ export const register: Register = (on, options) => {
           sound.playing.add(stop)
           if (event) sound.events.push(stop)
           else sound.takes.set(take, stop)
-          // No player (a Linux or Windows terminal), or refused for good: just silence.
+          // No player (a Linux or Windows terminal), or refused for good: just silence. Refused because the
+          // player's full, it tries again a moment on: unless the soundscape has stopped since, or (a bed's
+          // take) the planner has stopped that take (it took its entry out of `takes`).
+          const gen = sound.gen
+          let retrying = false
           void $.audio
             .play(clip, { gain: Math.min(4, SOUND_GAIN * gain), signal: stop.signal })
             .catch((err: unknown) => {
-              if (String(err).includes('at once') && tries < 4 && !stop.signal.aborted)
-                $.clock.after(50, () => sound.scene && play(clip, gain, take, tries + 1))
+              if (!String(err).includes('at once') || tries >= 4 || stop.signal.aborted) return
+              retrying = true
+              $.clock.after(50, () => {
+                if (!current(gen) || (take !== undefined && sound.takes.get(take) !== stop)) return
+                play(clip, gain, take, tries + 1)
+              })
             })
             .finally(() => {
               sound.playing.delete(stop)
               const i = sound.events.indexOf(stop)
               if (i >= 0) sound.events.splice(i, 1)
-              if (take !== undefined && sound.takes.get(take) === stop) sound.takes.delete(take)
+              if (!retrying && take !== undefined && sound.takes.get(take) === stop) sound.takes.delete(take)
             })
         }
         const playWav = (wav: string | undefined, gain = 1) => wav && play({ base64: wav, mime: 'audio/wav' }, gain)
@@ -444,7 +461,10 @@ export const register: Register = (on, options) => {
           if (at - sound.clock > 4 * SOUND_STAGGER_MS) continue
           sound.nextOf.set(e.kind, at + SOUND_STAGGER_MS)
           if (at === sound.clock) play({ asset: p.asset }, p.gain)
-          else $.clock.after(at - sound.clock, () => sound.scene && play({ asset: p.asset }, p.gain))
+          else {
+            const gen = sound.gen
+            $.clock.after(at - sound.clock, () => current(gen) && play({ asset: p.asset }, p.gain))
+          }
         }
         // (A rocket acts its level out a stage at a time: its own strength is the one to hear.)
         const level = shownScene.strength

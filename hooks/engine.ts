@@ -1,4 +1,4 @@
-// REVISION: flow-v104-sound-stream
+// REVISION: flow-v105-held
 //
 // Engine (the `engine` style): a Victorian steam engine room on the same dials
 // as the fire; the level is how hard it is being driven. At 1 it stands cold,
@@ -33,7 +33,7 @@ import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
 import type { Tint } from './styles'
 import { BRAILLE, clamp01, dist, mix, QUAD } from './pixels'
 import { defineScene } from './scene-def'
-import type { SoundEvent } from './sound'
+import { hear, type SoundEvent } from './sound'
 
 /** Crank radians per frame at each level (0 = off, 1 = cold and still). */
 const SPEED = [0, 0, 0.035, 0.07, 0.11, 0.15, 0.2, 0.27, 0.36, 0.47, 0.6]
@@ -679,7 +679,7 @@ export class Engine {
       const m = this.modules[i]!
       if (m.kind === HAMMER) {
         const lift = this.camLift(m)
-        if (lift < m.prev - 0.9) this.sounds.push({ kind: 'clank', v: level / 10 })
+        if (lift < m.prev - 0.9) hear(this.sounds, { kind: 'clank', v: level / 10 })
         if (lift < m.prev - 0.9 && level >= 4) {
           const n = smoke ? 1 : 1 + Math.floor(level / 3)
           for (let k = 0; k < n; k++)
@@ -699,7 +699,7 @@ export class Engine {
   }
 
   private chuff(level: number): void {
-    this.sounds.push({ kind: 'chuff', v: level / 10 })
+    hear(this.sounds, { kind: 'chuff', v: level / 10 })
     const amp = Math.min(1.25, 0.55 + level * 0.05 + this.coverageBoost * 0.004)
     this.puff(this.chimX, this.chimY, amp, 1.6 + level * 0.16, level)
   }

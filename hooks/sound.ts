@@ -1,4 +1,4 @@
-// REVISION: flow-v118-clunk
+// REVISION: flow-v119-drain
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -50,6 +50,17 @@ export const BED_TAKES = 3
  * far ahead, in frames (`leadFrames`), so it lands on the flash.
  */
 export const PLAYER_LEAD_MS = 380
+
+/** How long afplay holds its place in the player after its clip ends (draining) before it exits. */
+export const PLAYER_DRAIN_MS = 900
+
+/** The most events a scene holds for the adapter to take each frame (one that never takes them stays bounded). */
+export const EVENTS_HELD = 16
+
+/** Pushes an event onto a scene's queue unless it's full. */
+export function hear(queue: SoundEvent[], e: SoundEvent): void {
+  if (queue.length < EVENTS_HELD) queue.push(e)
+}
 
 /** PLAYER_LEAD_MS in frames at a scene's pace (SceneDriver.pace: 70 ms a frame, 125 when calm). */
 export function leadFrames(strength: number, tint: Tint): number {
@@ -477,7 +488,8 @@ export function bedStep(
     const id = seed * 32 + i
     const from = t && !moved ? t.due : clock
     const hold = moved && want.gain < t!.gain ? BED_FADE_MS / 3 : BED_FADE_MS
-    const alone = moved ? clock + hold : t ? t.at + BED_MS : clock
+    // (A take holds its place in the player till afplay exits: stopped, a moment after; played out, its drain after.)
+    const alone = moved ? clock + hold + 100 : t ? t.at + BED_MS + PLAYER_DRAIN_MS : clock
     takes[i] = { id, asset: want.asset, gain: want.gain, at: clock, due: Math.max(clock + BED_MIN_MS, from + bedGap(id)), retire: moved ? t!.id : undefined, hold, alone }
     play.push({ ...want, id })
   }

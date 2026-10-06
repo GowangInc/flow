@@ -1,4 +1,4 @@
-// REVISION: flow-v108-twin-heard
+// REVISION: flow-v109-held
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -50,7 +50,7 @@ import { STAR, STAR_DIM } from './night'
 import { fitQuad, g, hash, lowerBlock, mix, QUAD, type QuadFit } from './pixels'
 import { type SceneryCell, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
-import type { Ambience, SoundEvent } from './sound'
+import { hear, type Ambience, type SoundEvent } from './sound'
 
 const ceilEven = (n: number) => n + (n & 1)
 
@@ -975,7 +975,7 @@ abstract class LaunchSite extends SkyWorld {
         this.service = Math.min(1, this.service + 0.05)
         if (!home) {
           this.go('ignite')
-          this.sounds.push({ kind: 'ignite', v: 1 })
+          hear(this.sounds, { kind: 'ignite', v: 1 })
         }
         break
       case 'ignite':
@@ -1007,7 +1007,7 @@ abstract class LaunchSite extends SkyWorld {
           // Back down into the thick air, supersonic: its sonic boom, heard on the ground.
           if (this.staged <= 3 && !this.boomed) {
             this.boomed = true
-            this.sounds.push({ kind: 'sonic', v: 1 })
+            hear(this.sounds, { kind: 'sonic', v: 1 })
           }
           break
         }
@@ -1085,7 +1085,7 @@ abstract class LaunchSite extends SkyWorld {
           const want = this.burn < 115 ? 1 : 2
           if (want !== this.chute) {
             this.chute = want
-            this.sounds.push({ kind: 'chute', v: want / 2 })
+            hear(this.sounds, { kind: 'chute', v: want / 2 })
             this.chuteOpen = 0
           }
           this.chuteOpen = Math.min(1, this.chuteOpen + 0.06)
@@ -1099,7 +1099,7 @@ abstract class LaunchSite extends SkyWorld {
             this.v = 0
             this.pos = this.view = this.seaX()
             this.splash = 1
-            this.sounds.push({ kind: 'splash', v: 0.6 })
+            hear(this.sounds, { kind: 'splash', v: 0.6 })
             this.go('landed')
           }
           break
@@ -1137,7 +1137,7 @@ abstract class LaunchSite extends SkyWorld {
           this.pos = this.view = this.lz
           this.go(shipHome ? 'landed' : catches ? 'catch' : 'landed')
           if (shipHome) this.splash = 1
-          this.sounds.push({ kind: shipHome ? 'splash' : catches ? 'clang' : 'thud', v: 1 })
+          hear(this.sounds, { kind: shipHome ? 'splash' : catches ? 'clang' : 'thud', v: 1 })
         } else this.alt += this.v
         if (catches && !shipHome) armGoal = s.armCatch
         break
@@ -1199,7 +1199,7 @@ abstract class LaunchSite extends SkyWorld {
           this.alt = sea - this.flop * lie
           if (this.timer === 16 && hurry === 1) {
             this.boom = 1
-            this.sounds.push({ kind: 'boom', v: 1 })
+            hear(this.sounds, { kind: 'boom', v: 1 })
           }
           break
         }
@@ -1384,7 +1384,7 @@ abstract class LaunchSite extends SkyWorld {
   private separate(): void {
     this.part = 'upper'
     this.thr = 0
-    this.sounds.push({ kind: 'sep', v: 1 })
+    hear(this.sounds, { kind: 'sep', v: 1 })
     this.ghost = { part: 'booster', d: 0, v: -0.05, acc: -0.025, life: 48, max: 48 }
     // The booster turns back: once it's fallen out of frame, a split screen
     // follows it down (side by side in the band, top and bottom in a tall

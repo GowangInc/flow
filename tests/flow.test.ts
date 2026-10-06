@@ -16,7 +16,7 @@ import { keepOverrides, writeThrough } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
-import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, MAX_PLAYS, MOODS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlays, bedStep, burst, EVENTS, eventPlay, gather, LAYERS } from '../hooks/sound'
+import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlays, bedStep, burst, EVENTS, eventPlay, gather, LAYERS } from '../hooks/sound'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
 
@@ -45,10 +45,13 @@ function decode(cells: string): Uint32Array {
 function engine(
   on: On,
   captured: { blits: string[]; config: [string, unknown][]; invalidates?: number; plays?: string[]; toasts?: string[] } = { blits: [], config: [] },
+  /** Clips the player refuses as full (as Claude Code does past four at once). */
+  refuse?: (asset: string) => boolean,
 ) {
   on('audio.play', (_, e) => {
     const clip = e.clip as { base64?: string; asset?: string }
     ;(captured.plays ??= []).push(`${e.shouldLoop ? 'loop' : 'once'}:${(clip.base64 ?? '').length}:${clip.asset ?? (clip.base64 ?? '').slice(-24)}`)
+    if (clip.asset && refuse?.(clip.asset)) return { deny: 'refused: 4 plays are going at once' }
     return { value: undefined }
   })
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
@@ -492,13 +495,26 @@ test('soundscapes: a bed never has more than two takes going, leaving the player
       const level = 1 + (Math.floor(ms / 4130) * 7) % 10
       const amb = ambs[Math.floor(ms / 2710) % ambs.length]!
       const { play, stop } = bedStep(takes, { scene, level, tint: 'normal', night: false, amb }, ms, seed++)
-      for (const id of stop) live.delete(id)
-      for (const p of play) live.set(p.id, ms + BED_MS)
+      // (A stopped take leaves the player a moment later; a played-out one after afplay's drain.)
+      for (const id of stop) if (live.has(id)) live.set(id, Math.min(live.get(id)!, ms + 100))
+      for (const p of play) live.set(p.id, ms + BED_MS + PLAYER_DRAIN_MS)
       for (const [id, end] of live) if (end <= ms) live.delete(id)
       most = Math.max(most, live.size)
     }
     expect(most).toBeLessThanOrEqual(2)
     expect(MAX_PLAYS - most).toBeGreaterThanOrEqual(2)
+  }
+})
+
+test('soundscapes: a scene holds only a few events for the adapter, so one that never takes them (pi) stays bounded', () => {
+  for (const style of STYLES) {
+    const f = makeScene(style, 2)
+    f.ensure(100, 5)
+    for (let i = 0; i < 6000; i++) {
+      f.strength = i % 900 < 450 ? 10 : 3
+      f.step()
+    }
+    expect((f.sounds ?? []).length).toBeLessThanOrEqual(24)
   }
 })
 
@@ -654,6 +670,26 @@ test('spine: the pane hides while flow is off, as the band does, and comes back 
   expect(panes.has('flow')).toBe(true)
   // Still the spine: the pane closing itself isn't you asking for the band.
   expect(await flow($, '')).toContain('spine')
+})
+
+test('a clip refused as the player is full is retried, but not once the soundscape has moved to another scene', { options: { mode: 'manual', level: 9, sound: 'on', style: 'engine' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  // The player refuses the engine's chuffs (full); everything else plays.
+  const seen = engine(on, undefined, asset => asset.includes('chuff'))
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const chuffs = () => (seen.plays ?? []).filter(p => p.includes('chuff')).length
+  await clock.advance(1000)
+  // Frame by frame till a chuff is refused; then, its retry not yet due, another scene.
+  const start0 = chuffs()
+  for (let k = 0; k < 100 && chuffs() === start0; k++) await clock.advance(10)
+  expect(chuffs()).toBeGreaterThan(start0)
+  await flow($, 'surf')
+  const before = chuffs()
+  await clock.advance(2000)
+  expect(chuffs()).toBe(before)
+  await ui.unmount()
 })
 
 test('sound off (the default): nothing plays', async ($, on) => {

@@ -1,4 +1,4 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v62-drain
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -149,6 +149,8 @@ export default function flow(pi: PiApi) {
     const f = dial()
     if (isMounted && width > 0 && tui) {
       f.step()
+      // pi has no player: a scene's events (for Claude Code's soundscape) are taken and dropped each frame.
+      if (f.sounds) f.sounds.length = 0
       lines = gridToAnsi(f.grid())
       tui.requestRender()
     }
