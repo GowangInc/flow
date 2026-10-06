@@ -82,6 +82,16 @@
         "day",
         "night"
       ]
+    },
+    "sound": {
+      "type": "string",
+      "title": "Sound",
+      "description": "A soundscape for each scene that swells with the work: crackling fire, surf, chuffing steam, rocket roar (macOS only; off by default)",
+      "default": "off",
+      "options": [
+        "off",
+        "on"
+      ]
     }
   }
 }

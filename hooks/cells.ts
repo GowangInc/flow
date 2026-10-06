@@ -1,4 +1,4 @@
-// REVISION: flow-v75-tall-by-rows
+// REVISION: flow-v103-sound
 //
 // Shared by the styles: a small PRNG and the cell grid every harness draws
 // from (packed for Claude Code's Raster, rendered as ANSI lines for pi).
@@ -45,7 +45,7 @@ const PAD = 0x3d // '='
 const ascii = new TextDecoder()
 
 /** Standard padded base64: native where the runtime has it, else a table. */
-function toBase64(bytes: Uint8Array): string {
+export function toBase64(bytes: Uint8Array): string {
   const anyBytes = bytes as Uint8Array & { toBase64?: () => string }
   if (typeof anyBytes.toBase64 === 'function') return anyBytes.toBase64()
   const n = bytes.length

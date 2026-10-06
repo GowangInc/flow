@@ -1,11 +1,11 @@
-// REVISION: flow-v102-review-fixes
+// REVISION: flow-v110-long-beds
 
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten } from '../hooks/activity'
-import { changedText, changesFor, helpText, isNightAt, parseFlowArgs, readConfig, statusText } from '../hooks/settings'
+import { nextTip, readTips, changedText, changesFor, helpText, isNightAt, parseFlowArgs, readConfig, statusText } from '../hooks/settings'
 import { gridToAnsi } from '../pi/ansi'
 import { effortOf, piLinesWritten } from '../pi/mapping'
 import { Balloon, skyColor } from '../hooks/balloon'
@@ -16,6 +16,8 @@ import { keepOverrides, writeThrough } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
+import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, MAX_PLAYS, MOODS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlays, bedStep, burst, EVENTS, eventPlay, gather, LAYERS } from '../hooks/sound'
+import { SOUND_FILES } from '../hooks/sound-files'
 import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
 
 const BAND = {
@@ -42,14 +44,23 @@ function decode(cells: string): Uint32Array {
 /** Stand for the engine beneath the plugin: its band, session start, calls. */
 function engine(
   on: On,
-  captured: { blits: string[]; config: [string, unknown][]; invalidates?: number } = { blits: [], config: [] },
+  captured: { blits: string[]; config: [string, unknown][]; invalidates?: number; plays?: string[]; toasts?: string[] } = { blits: [], config: [] },
 ) {
+  on('audio.play', (_, e) => {
+    const clip = e.clip as { base64?: string; asset?: string }
+    ;(captured.plays ??= []).push(`${e.shouldLoop ? 'loop' : 'once'}:${(clip.base64 ?? '').length}:${clip.asset ?? (clip.base64 ?? '').slice(-24)}`)
+    return { value: undefined }
+  })
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Text } = $.ui.resolve(e)
     return Text({ children: 'engine band' })
   })
   on('session.start', () => ({ cwd: '/tmp' }))
   on('ui.log', () => ({ value: undefined }))
+  on('ui.toast', (_, e) => {
+    ;(captured.toasts ??= []).push((e as { text: string }).text)
+    return { value: undefined }
+  })
   on('ui.invalidate', () => {
     captured.invalidates = (captured.invalidates ?? 0) + 1
     return { value: undefined }
@@ -419,8 +430,218 @@ test('surf and ski: night darkens the sky, with stars or a moon in it', async ()
   }
 })
 
+test('settings: /flow sound on | off | (toggle), shown in the status', () => {
+  expect(parseFlowArgs('sound on')).toEqual({ kind: 'sound', sound: 'on' })
+  expect(parseFlowArgs('sound off')).toEqual({ kind: 'sound', sound: 'off' })
+  expect(parseFlowArgs('sound')).toEqual({ kind: 'sound' })
+  expect(parseFlowArgs('sound loud').kind).toBe('error')
+  const cfg = readConfig({ sound: 'on' })
+  expect(cfg.sound).toBe('on')
+  expect(changesFor(parseFlowArgs('sound'), cfg)).toEqual({ sound: 'off' })
+  expect(statusText(cfg, 3, 'normal', { hour: 12, minute: 0 })).toContain('sound on')
+  expect(helpText()).toContain('/flow sound')
+})
+
+test('soundscapes: a bed renews as its take fades, never with the take before, and follows the level at once', () => {
+  const takes: (BedTake | undefined)[] = []
+  const mood = (level: number) => ({ scene: 'avalon', level, tint: 'normal' as const, night: false, amb: {} })
+  const starts: number[] = []
+  const picks: string[] = []
+  let seed = 1
+  for (let ms = 0; ms < 600_000; ms += 70) {
+    const { play, stop } = bedStep(takes, mood(5), ms, seed++)
+    expect(stop).toEqual([])
+    for (const p of play) {
+      starts.push(ms)
+      picks.push(p.asset)
+    }
+  }
+  for (let i = 1; i < starts.length; i++) {
+    const gap = starts[i]! - starts[i - 1]!
+    expect(gap >= BED_MIN_MS && gap <= BED_EVERY_MS + 70).toBe(true)
+  }
+  for (let i = 1; i < picks.length; i++) expect(picks[i]).not.toBe(picks[i - 1])
+  expect(new Set(picks).size).toBe(3)
+  // A jump in level (another mood) starts a fresh take now, and the old one stops once it's in.
+  const at = Math.max(600_000, starts.at(-1)! + BED_MS)
+  const before = takes.map(t => t?.id)
+  const rise = bedStep(takes, mood(10), at, seed++)
+  expect(rise.play.length).toBe(1)
+  expect(rise.play[0]!.asset).not.toBe(picks.at(-1))
+  const later = bedStep(takes, mood(10), at + BED_FADE_MS, seed++)
+  expect(later.stop.length).toBe(1)
+  expect(before.includes(later.stop[0])).toBe(true)
+  // A bed that falls silent stops (a rocket's engines cutting off, in orbit's quiet... or none at all).
+  const rocket: (BedTake | undefined)[] = []
+  const flying = { scene: 'falcon', level: 5, tint: 'normal' as const, night: false, amb: { roar: 1 } }
+  const on = bedStep(rocket, flying, 0, 1)
+  expect(on.play.length).toBe(1)
+  const quiet = bedStep(rocket, { ...flying, amb: {} }, BED_FADE_MS, 2)
+  expect(quiet.stop).toEqual([on.play[0]!.id])
+})
+
+test('soundscapes: a bed never has more than two takes going, leaving the player room for events', () => {
+  for (const scene of STYLES) {
+    const takes: (BedTake | undefined)[] = []
+    const live = new Map<number, number>() // id -> when it ends by itself
+    let seed = 1
+    let most = 0
+    const ambs = [{}, { roar: 1 }, { roar: 1, wind: 1 }, { space: 1 }, { wind: 0.5 }, { vent: 1 }, { sea: 1 }, { burner: 1 }]
+    for (let ms = 0; ms < 900_000; ms += 70) {
+      // The level and the doings wander: a new mood every few seconds.
+      const level = 1 + (Math.floor(ms / 4130) * 7) % 10
+      const amb = ambs[Math.floor(ms / 2710) % ambs.length]!
+      const { play, stop } = bedStep(takes, { scene, level, tint: 'normal', night: false, amb }, ms, seed++)
+      for (const id of stop) live.delete(id)
+      for (const p of play) live.set(p.id, ms + BED_MS)
+      for (const [id, end] of live) if (end <= ms) live.delete(id)
+      most = Math.max(most, live.size)
+    }
+    expect(most).toBeLessThanOrEqual(2)
+    expect(MAX_PLAYS - most).toBeGreaterThanOrEqual(2)
+  }
+})
+
+test('soundscapes: a busy burst samples the whole window, not just its first events', () => {
+  const q: number[] = []
+  for (let i = 0; i < 400; i++) gather(q, i, i, i * 7 + 1)
+  expect(q.length).toBe(BURST_MAX)
+  expect(q.filter(i => i >= 200).length).toBeGreaterThan(BURST_MAX / 4)
+})
+
+test('soundscapes: beds overlap at random gaps (no seam keeps a beat), and on-screen events synthesize a burst (a valid WAV, each at its moment)', () => {
+  expect(BED_MS).toBeGreaterThan(BED_EVERY_MS)
+  const gaps = Array.from({ length: 200 }, (_, i) => bedGap(i))
+  for (const g of gaps) expect(g >= BED_MIN_MS && g <= BED_EVERY_MS).toBe(true)
+  expect(new Set(gaps).size).toBeGreaterThan(100)
+  expect(Math.max(...gaps) - Math.min(...gaps)).toBeGreaterThan((BED_EVERY_MS - BED_MIN_MS) * 0.9)
+  const b64 = burst([{ kind: 'pop', v: 0.5, offset: 0 }, { kind: 'crack', v: 1, offset: 0.2 }], 3)!
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+  expect(String.fromCharCode(...bytes.subarray(0, 4))).toBe('RIFF')
+  const n = new DataView(bytes.buffer).getUint32(40, true) / 2
+  expect(n).toBeGreaterThan(0.2 * 22050)
+  expect(burst([], 1)).toBeUndefined()
+})
+
+test('soundscapes: every scene has a bed for every mood, every clip it and the events name exists, and no play can clip', () => {
+  const files = new Set(SOUND_FILES)
+  const ambs = [{}, { roar: 1, vent: 1, wind: 1, space: 0, burner: 1, swell: 1, curl: 1 }, { roar: 1, space: 1 }, { wind: 0.5 }, { sea: 1 }]
+  for (const scene of STYLES) {
+    expect(LAYERS[scene]).toBeDefined()
+    expect(MOODS[scene]).toBeDefined()
+    let heard = 0
+    for (let level = 0; level <= 10; level++)
+      for (const amb of ambs)
+        for (let seed = 0; seed < 6; seed++)
+          for (const p of bedPlays({ scene, level, tint: 'normal', night: false, amb }, seed) ?? []) {
+            heard++
+            expect(files.has(p.asset)).toBe(true)
+            // Clips peak at -2 to -3 dBFS and afplay's gain multiplies: past ~1.4 it clips.
+            expect(p.gain).toBeLessThanOrEqual(1.4)
+          }
+    expect(heard).toBeGreaterThan(0)
+  }
+  for (const kind of Object.keys(EVENTS) as (keyof typeof EVENTS)[])
+    for (let seed = 0; seed < 6; seed++) {
+      const p = eventPlay({ kind, v: 1 }, seed, 'falcon', 10)!
+      expect(files.has(p.asset)).toBe(true)
+    }
+})
+
+test('sound on: fresh beds keep coming while it shows, and what happens on screen is heard', { options: { mode: 'manual', level: 9, sound: 'on', style: 'bubbles' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(10_000)
+  const plays = seen.plays ?? []
+  // Beds (4 s each, every 3.3 s) and bursts of pops; nothing loops.
+  expect(plays.length).toBeGreaterThan(6)
+  expect(plays.every(p => p.startsWith('once:'))).toBe(true)
+  const sizes = new Set(plays.map(p => Number(p.split(':')[1])))
+  expect(sizes.size).toBeGreaterThan(1) // beds and bursts are different clips
+  await ui.unmount()
+})
+
+test('tips: the other scenes once, while it is still the fire; the sound three chances later, if never on', () => {
+  const fire = readConfig({})
+  let t = readTips(undefined)
+  let r = nextTip(t, fire)
+  expect(r.tip).toContain('/flow next')
+  expect(r.tip).toContain('starship')
+  t = r.tips
+  // Never again.
+  const tips: (string | undefined)[] = []
+  for (let i = 0; i < 6; i++) {
+    r = nextTip(t, fire)
+    tips.push(r.tip)
+    t = r.tips
+  }
+  expect(tips.filter(Boolean).length).toBe(1)
+  expect(tips[2]).toContain('/flow sound')
+  // Found another scene first: no scenes tip; sound on before its turn: no sound tip.
+  t = {}
+  for (let i = 0; i < 6; i++) {
+    r = nextTip(t, readConfig({ style: 'surf', sound: i === 1 ? 'on' : 'off' }))
+    expect(r.tip).toBeUndefined()
+    t = r.tips
+  }
+  // Stored junk is ignored.
+  expect(readTips({ scenesTold: 'yes', since: -1, soundTold: true })).toEqual({ soundTold: true })
+})
+
+test('tips: starting on the fire shows the scenes tip once, as a toast', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  expect(seen.toasts ?? []).toHaveLength(1)
+  expect(seen.toasts![0]).toContain('`/flow next` steps through them')
+  expect(await flow($, '')).not.toContain('steps through them')
+})
+
+test('tips: or, started without a prompt to toast over, under the next /flow', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await ($ as unknown as { session: { start: (a: object) => Promise<unknown> } }).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: false })
+  expect(seen.toasts ?? []).toEqual([])
+  expect(await flow($, '')).toContain('`/flow next` steps through them')
+  expect(await flow($, '')).not.toContain('steps through them')
+})
+
+test('/flow sound toggles it: on, the soundscape plays; off again, it stops at once and nothing more plays', { options: { mode: 'manual', level: 9, style: 'bubbles' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(2000)
+  expect(seen.plays ?? []).toEqual([])
+  expect(await flow($, 'sound')).toContain('sound on')
+  await clock.advance(3000)
+  const playing = (seen.plays ?? []).length
+  expect(playing).toBeGreaterThan(0)
+  expect(await flow($, 'sound')).toContain('sound off')
+  await clock.advance(5000)
+  expect((seen.plays ?? []).length).toBe(playing)
+  await ui.unmount()
+})
+
+test('sound off (the default): nothing plays', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(2000)
+  expect(seen.plays ?? []).toEqual([])
+  await ui.unmount()
+})
+
 test('config values are validated, falling back to defaults', async () => {
-  expect(readConfig(undefined)).toEqual({ mode: 'auto', style: 'fire', idle: 1, level: 8, layout: 'band', time: 'clock' })
+  expect(readConfig(undefined)).toEqual({ mode: 'auto', style: 'fire', idle: 1, level: 8, layout: 'band', time: 'clock', sound: 'off' })
   expect(readConfig({ mode: 'manual', style: 'ember', idle: 'dark', level: 3 })).toEqual({
     mode: 'manual',
     style: 'fire',
@@ -428,6 +649,7 @@ test('config values are validated, falling back to defaults', async () => {
     level: 3,
     layout: 'band',
     time: 'clock',
+    sound: 'off',
   })
   expect(readConfig({ idle: 'pilot' }).idle).toBe(1) // the old name for glow
   expect(readConfig({ idle: 'glow' })).toEqual({
@@ -437,6 +659,7 @@ test('config values are validated, falling back to defaults', async () => {
     level: 8,
     layout: 'band',
     time: 'clock',
+    sound: 'off',
   })
   expect(readConfig({ mode: 'loud', style: 'hearth', idle: 'x', level: 5.5 })).toEqual(readConfig(undefined))
   expect(readConfig({ level: 42 }).level).toBe(8)
@@ -456,8 +679,9 @@ test('/flow applies at once without a /config write (no reload), and its changes
   const seen = engine(on)
   await start($)
   expect(await flow($, 'next')).toBe('warp · `/flow next` for another')
-  expect(await flow($, '5')).toBe('holding 5/10 — `/flow auto` to follow the work again')
-  expect(await flow($, '8')).toBe('holding 8/10 — `/flow auto` to follow the work again')
+  // (A one-time tip may follow the reply, after a blank line.)
+  expect((await flow($, '5')).split('\n\n')[0]).toBe('holding 5/10 — `/flow auto` to follow the work again')
+  expect((await flow($, '8')).split('\n\n')[0]).toBe('holding 8/10 — `/flow auto` to follow the work again')
   expect(seen.config).toEqual([]) // nothing written to /config: the scene keeps running
   expect((await flow($)).split('\n')[0]).toBe('warp, holding 8/10')
   // A reload (a /config menu change, a restart) reads them back from the store.
@@ -1158,3 +1382,24 @@ test('ski: the skier never drops out of its own cells, even with fast scenery be
   }
 })
 
+
+test('avalon: each strike is sent ahead of its flash by the player start-up time, once a rock', () => {
+  const f = makeScene('avalon', 3) as unknown as { ensure(c: number, r: number): void; step(): void; strength: number; hits: { age: number }[]; sounds: { kind: string }[] }
+  f.ensure(120, 5)
+  f.strength = 10
+  const sent: number[] = []
+  const flashed: number[] = []
+  for (let i = 0; i < 3000; i++) {
+    f.step()
+    for (const e of f.sounds) if (e.kind === 'hit') sent.push(i)
+    f.sounds.length = 0
+    // (Old flashes age out as new ones land: count the new ones by their age.)
+    for (const h of f.hits) if (h.age === 0) flashed.push(i)
+  }
+  expect(sent.length).toBeGreaterThan(20)
+  expect(sent.length).toBe(flashed.length)
+  const leads = sent.map((at, n) => flashed[n]! - at)
+  const want = PLAYER_LEAD_MS / 70
+  for (const l of leads) expect(l >= 0 && l <= Math.ceil(want) + 1).toBe(true)
+  expect(leads.filter(l => Math.abs(l - want) <= 1.5).length).toBeGreaterThan(leads.length * 0.8)
+})

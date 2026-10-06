@@ -1,4 +1,4 @@
-// REVISION: flow-v102-review-fixes
+// REVISION: flow-v117-play-budget
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -27,21 +27,13 @@ import type { CommandRunInput, CommandRunResult, EngineInterface, Register } fro
 import { Balloon } from './balloon'
 import { Activity, linesWritten } from './activity'
 import { FRAME_MS, SceneDriver } from './scene'
-import {
-  changedText,
-  changesFor,
-  helpText,
-  parseFlowArgs,
-  readConfig,
-  statusText,
-  storedValue,
-  type FlowConfig,
-} from './settings'
+import { changedText, changesFor, helpText, parseFlowArgs, readConfig, statusText, storedValue, type FlowConfig, nextTip, readTips } from './settings'
 import { styleNamed } from './styles'
 import { frameSvg } from './svg'
+import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent } from './sound'
 
 
-const FLOW_REVISION = 'flow-v102-review-fixes'
+const FLOW_REVISION = 'flow-v110-no-rhythms'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -56,6 +48,16 @@ const BLIT_STALE_TICKS = 15
 const MAX_ROWS = 5
 /** A desktop site redraws at most 10 times a second (`$.ui.invalidate`'s limit there). */
 const DESKTOP_MS = 100
+/** How loud the soundscape plays (linear gain, 0 to 4). */
+const SOUND_GAIN = 1
+/**
+ * Small events are gathered this long (ms) and played together, each at its
+ * moment: each clip holds one of the player's few plays for its length and
+ * almost a second more (afplay starting and draining), so not much shorter.
+ */
+const SOUND_BURST_MS = 1000
+/** The nearest two events of a kind with clips play (nearer, the ear hears one). */
+const SOUND_STAGGER_MS = 120
 /** A desktop site that hasn't rendered for this many ticks (about 3 s) is gone. */
 const DESKTOP_STALE_TICKS = 45
 /** A desktop cell in CSS pixels (its text's column and line), to size the frame's image. */
@@ -189,8 +191,29 @@ type SceneCtx = {
   leftSpine: () => void
 }
 
+const TIPS = 'tips'
+
+/** A chance for a one-time tip (see nextTip), the store keeping which have been given: the tip, if one's due. */
+async function takeTip($: EngineInterface, cfg: FlowConfig): Promise<string | undefined> {
+  try {
+    const before = readTips(await $.store.get(TIPS))
+    const { tip, tips } = nextTip(before, cfg)
+    if (JSON.stringify(tips) !== JSON.stringify(before)) await $.store.set(TIPS, tips)
+    return tip
+  } catch {
+    return undefined
+  }
+}
+
 /** `/flow`: show, help, or apply a change, keep it, and answer. */
 async function runScene($: EngineInterface, e: CommandRunInput, ctx: SceneCtx): Promise<CommandRunResult> {
+  const reply = await sceneReply($, e, ctx)
+  // A one-time tip goes under the reply (the other scenes, or the sound).
+  const tip = await takeTip($, ctx.driver.cfg)
+  return tip ? { ...reply, text: `${reply.text ?? ''}\n\n${tip}` } : reply
+}
+
+async function sceneReply($: EngineInterface, e: CommandRunInput, ctx: SceneCtx): Promise<CommandRunResult> {
   const { driver } = ctx
   const cfg = driver.cfg
   const cmd = parseFlowArgs(e.args)
@@ -231,6 +254,38 @@ export const register: Register = (on, options) => {
   let ticks = 0
   /** A subagent's step or tool call arrived: count the running ones at the next poll. */
   let subagentSeen = false
+  /**
+   * The soundscape: the clips playing (each stoppable), its own clock (ms),
+   * each bed layer's take (`bedStep` keeps them) and their players by id,
+   * when the next burst of events is due, and the events gathered since the last.
+   */
+  const sound = {
+    playing: new Set<AbortController>(),
+    clock: 0,
+    bed: [] as (BedTake | undefined)[],
+    takes: new Map<number, AbortController>(),
+    nextBurst: 0,
+    lastBurst: 0,
+    queue: [] as (SoundEvent & { at: number })[],
+    /** How many events the window has seen (more than the queue holds when it's busy). */
+    seen: 0,
+    /** When each kind of event with a clip of its own may play next (a closer one waits till then). */
+    nextOf: new Map<string, number>(),
+    /** The event clips playing, oldest first (the first to give way when the player is full). */
+    events: [] as AbortController[],
+    seed: 1,
+    scene: '',
+  }
+  const stopSound = () => {
+    for (const c of sound.playing) c.abort()
+    sound.playing.clear()
+    sound.takes.clear()
+    sound.events.length = 0
+    sound.bed = []
+    sound.queue.length = 0
+    sound.seen = 0
+    sound.scene = ''
+  }
   /** The tick a blit went out on, -1 when none is in flight. */
   let blitAt = -1
   let lastCells = ''
@@ -313,6 +368,12 @@ export const register: Register = (on, options) => {
       if (balloon instanceof Balloon) balloon.seed(altitude)
     }
 
+    // A one-time tip, the settings now in: the other scenes, or the sound.
+    if (e.isInteractive) {
+      const tip = await takeTip($, cfg)
+      if (tip) $.ui.toast(tip, { timeoutMs: 12_000 })
+    }
+
     // The frame loop: its own pace, rescheduled each tick.
     let wasShown = driver.isShown()
     let keptAltitude = -1
@@ -321,6 +382,88 @@ export const register: Register = (on, options) => {
       activity.tick(elapsed / FRAME_MS)
       const site = mounted
       const desk = desktopSite()
+      // The soundscape, while the scene is on screen: beds crossfading one
+      // into the next, and what happens on screen heard as it happens.
+      sound.clock += elapsed
+      const heard = cfg.sound === 'on' && (site || desk) && driver.isShown()
+      const shownScene = site ? driver.scene : desk ? desktopDriver.scene : undefined
+      const events: SoundEvent[] = []
+      for (const sc of [driver.scene, desktopDriver.scene]) {
+        if (!sc.sounds) continue
+        if (heard && sc === shownScene) events.push(...sc.sounds)
+        sc.sounds.length = 0
+      }
+      if (!heard || !shownScene) {
+        if (sound.scene) stopSound()
+      } else {
+        // A clip: one of the plugin's own (`asset`) or synthesized here (base64 WAV). Claude Code plays at
+        // most MAX_PLAYS at once for a plugin: a clip finding them all going stops the oldest event clip
+        // (`take` undefined) first (a tail cut beats a strike unheard, or the bed dropping out); a refused
+        // one tries again a moment on.
+        const play = (clip: { asset: string } | { base64: string; mime: string }, gain = 1, take?: number, tries = 0): void => {
+          const event = take === undefined
+          if (tries === 0 && sound.playing.size >= MAX_PLAYS) sound.events.shift()?.abort()
+          const stop = new AbortController()
+          sound.playing.add(stop)
+          if (event) sound.events.push(stop)
+          else sound.takes.set(take, stop)
+          // No player (a Linux or Windows terminal), or refused for good: just silence.
+          void $.audio
+            .play(clip, { gain: Math.min(4, SOUND_GAIN * gain), signal: stop.signal })
+            .catch((err: unknown) => {
+              if (String(err).includes('at once') && tries < 4 && !stop.signal.aborted)
+                $.clock.after(50, () => sound.scene && play(clip, gain, take, tries + 1))
+            })
+            .finally(() => {
+              sound.playing.delete(stop)
+              const i = sound.events.indexOf(stop)
+              if (i >= 0) sound.events.splice(i, 1)
+              if (take !== undefined && sound.takes.get(take) === stop) sound.takes.delete(take)
+            })
+        }
+        const playWav = (wav: string | undefined, gain = 1) => wav && play({ base64: wav, mime: 'audio/wav' }, gain)
+        // Events with a clip of their own play now; the rest gather into a burst.
+        for (const e of events) {
+          const p = eventPlay(e, sound.seed++, cfg.style, shownScene.strength)
+          if (!p) {
+            // (Somewhere since the last frame, at random: a frame's pops all at once would buzz at the frame rate.)
+            const at = sound.clock - Math.min(elapsed, 150) * unit(sound.seed++)
+            gather(sound.queue, sound.seen++, { ...e, at }, sound.seed++)
+            continue
+          }
+          // Each is heard, however close: one of a kind at most every SOUND_STAGGER_MS, a close one put back
+          // a moment (two rocks striking together are two booms; any nearer, the ear hears one).
+          const at = Math.max(sound.clock, sound.nextOf.get(e.kind) ?? 0)
+          if (at - sound.clock > 4 * SOUND_STAGGER_MS) continue
+          sound.nextOf.set(e.kind, at + SOUND_STAGGER_MS)
+          if (at === sound.clock) play({ asset: p.asset }, p.gain)
+          else $.clock.after(at - sound.clock, () => sound.scene && play({ asset: p.asset }, p.gain))
+        }
+        // (A rocket acts its level out a stage at a time: its own strength is the one to hear.)
+        const level = shownScene.strength
+        if (cfg.style !== sound.scene) {
+          stopSound()
+          sound.scene = cfg.style
+        }
+        const mood = { scene: cfg.style, level, tint: driver.tint(), night: driver.isNight(), amb: shownScene.ambience?.() ?? {} }
+        const beds = bedStep(sound.bed, mood, sound.clock, sound.seed++)
+        for (const id of beds.stop) {
+          sound.takes.get(id)?.abort()
+          sound.takes.delete(id)
+        }
+        for (const p of beds.play) play({ asset: p.asset }, p.gain, p.id)
+        if (sound.clock >= sound.nextBurst) {
+          // Each event at its moment in the window since the last burst.
+          const from = Math.max(sound.lastBurst, sound.clock - 2 * SOUND_BURST_MS)
+          sound.lastBurst = sound.clock
+          sound.nextBurst = sound.clock + SOUND_BURST_MS
+          if (sound.queue.length) {
+            playWav(burst(sound.queue.map(e => ({ ...e, offset: Math.max(0, (e.at - from) / 1000) })), sound.seed++), master(cfg.style, shownScene.strength))
+            sound.queue.length = 0
+            sound.seen = 0
+          }
+        }
+      }
       // Every second or so, note the balloon's altitude if it moved, so a
       // /config change made from the menu (a reload) resumes it too.
       const b = (site || !desk ? driver : desktopDriver).sceneFor('balloon')
@@ -480,6 +623,8 @@ export const register: Register = (on, options) => {
   on('command.run', { command: COMMAND }, ($, e) => runScene($, e, sceneCtx))
 
   on('session.end', async ($, e, next) => {
+    // The soundscape stops with the session.
+    stopSound()
     // Bring the /config rows up to date (the reload this causes no longer
     // matters). Fields /config refuses, or that the end's short time bound
     // cuts off, stay in the store for the next session to apply.

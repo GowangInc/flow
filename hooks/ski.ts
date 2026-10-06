@@ -1,4 +1,4 @@
-// REVISION: flow-v82-aliases
+// REVISION: flow-v105-free-turns
 //
 // A skier on a mountain, on the fire's dials: the level is the speed and the
 // steepness. At 1 the skier stands at the top of the run, poles planted,
@@ -32,6 +32,7 @@ import type { Tint } from './styles'
 import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
 import { BRAILLE, clamp, fitQuad, hashMurmur as hash, mix, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
+import type { Ambience, SoundEvent } from './sound'
 
 // ---------------------------------------------------------------- tables
 
@@ -282,6 +283,7 @@ interface Skier {
 export class Ski {
   strength = 8
   coverageBoost = 0
+  sounds: SoundEvent[] = []
   tint: Tint = 'normal'
   /** Night: moonlit snow, stars and a moon; the hut's window lit. */
   night = false
@@ -306,6 +308,10 @@ export class Ski {
   private amp = 0
   private rate = (2 * Math.PI) / 60
   private phi = 0
+  /** This turn's pace and width against the level's, drawn afresh each turn: a skier's turns aren't a metronome. */
+  private pace = 1
+  private wide = 1
+  private turn = 0
   private moguls = 0
   private gates = 0
   // Air: height (pixels) and climb, and the kickers (distances where their lips are).
@@ -441,6 +447,10 @@ export class Ski {
 
   // ------------------------------------------------------------ motion
 
+  ambience(): Ambience {
+    return { wind: Math.min(1, this.v / SPEED[10]!) }
+  }
+
   step(): void {
     if (this.columns === 0) return
     this.ease()
@@ -465,8 +475,14 @@ export class Ski {
     if (this.v < 0.004) this.v = vT > 0 ? this.v : 0
     this.steep += (L / 10 - this.steep) * 0.03
     const moving = Math.min(1, this.v / 0.35)
-    this.amp += (AMP[L]! * moving - this.amp) * 0.03
-    this.rate += ((2 * Math.PI) / PERIOD[L]! - this.rate) * 0.05
+    const turn = Math.floor(this.phi / Math.PI)
+    if (turn !== this.turn) {
+      this.turn = turn
+      this.pace = 0.75 + 0.55 * this.rng.f()
+      this.wide = 0.8 + 0.4 * this.rng.f()
+    }
+    this.amp += (AMP[L]! * this.wide * moving - this.amp) * 0.03
+    this.rate += (((2 * Math.PI) / PERIOD[L]!) * this.pace - this.rate) * 0.05
     this.moguls += (MOGULS[L]! - this.moguls) * 0.02
     this.gates += (GATES[L]! - this.gates) * 0.02
     this.d += this.v
@@ -510,6 +526,8 @@ export class Ski {
     for (let i = 0; i <= n; i++) {
       const s = this.skiers[i]!
       const lat = i === 0 && this.fall ? s.lat : this.amp * Math.sin(this.phi + s.off)
+      // Each turn's edge change, heard.
+      if (i === 0 && Math.sign(lat) !== Math.sign(s.lat) && this.sounds.length < 8) this.sounds.push({ kind: 'swish', v: Math.min(1, this.v / 2) })
       s.lat = lat
       if (tall) {
         const half = this.room()
