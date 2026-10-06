@@ -2,6 +2,8 @@
 
 Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, and a colony ship behind its shield. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
 
+https://github.com/user-attachments/assets/aad7c890-f275-4329-8715-58e3c0f1ec04
+
 By Rob Macrae.
 
 Each scene is drawn in 24-bit color from Unicode block, quadrant and braille characters, so several pixels share each terminal cell. In the Claude desktop app, which has no character grid to draw into, the same frames are drawn as images.
@@ -73,6 +75,7 @@ Balloon, falcon, starship, surf and ski also have a **night** version: stars, a 
 |---|---|
 | idle | a low glow (or nothing, if you choose) |
 | in a turn | rises to a level set by effort: `low` 2, default 3, `high` 4, `xhigh` 5, `max` 6 |
+| working a while | one level more for every 30 s the turn has run |
 | streaming an answer | keeps going (limited per second, so plain chat sits mid-range) |
 | editing files | pushes higher, scaled by the lines written |
 | running commands | sparks; a slow command keeps it ticking over |
@@ -80,7 +83,7 @@ Balloon, falcon, starship, surf and ski also have a **night** version: stars, a 
 | hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey |
 | near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame |
 
-A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel.
+A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel, or a long turn: it climbs a level every 30 s it keeps going.
 
 ## The command
 
@@ -120,7 +123,7 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 
 | pi event | The scene |
 |---|---|
-| `agent_start` / `agent_end` | a turn lifts it, then it settles to idle |
+| `agent_start` / `agent_end` | a turn lifts it (a level more for every 30 s it runs), then it settles to idle |
 | `turn_start` | rises to the floor for `ctx.thinkingLevel` (`minimal`/`low` 2 … `max` 6) |
 | `message_update` deltas | streamed text and thinking keep it going |
 | `tool_call` | `write`/`edit` push it by lines written, `bash` sparks, reads flicker |
