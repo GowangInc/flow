@@ -1,4 +1,4 @@
-// REVISION: flow-v82-aliases
+// REVISION: flow-v104-sound-stream
 //
 // The scenes, all driven by the same dials (strength 0..10, coverage boost,
 // tint, night): SCENES, the one list of them (each scene file exports its
@@ -14,6 +14,7 @@ export type { Cells }
 import { heatColor, smokeColor } from './fire-palette'
 import { BRAILLE, mix } from './pixels'
 import { defineScene, type SceneDef } from './scene-def'
+import type { Ambience, SoundEvent } from './sound'
 import { balloonScene } from './balloon'
 import { avalonScene } from './colony'
 import { engineScene } from './engine'
@@ -40,6 +41,10 @@ export interface Scene {
   grid(): Cells
   /** `grid()` encoded as Raster cells, for Claude Code's terminal. */
   frame(): string
+  /** What just happened on screen, to be heard: the adapter takes them (and empties it). */
+  sounds?: SoundEvent[]
+  /** What it's doing now, for its soundscape's background. */
+  ambience?(): Ambience
 }
 
 function defOf(style: SceneName): SceneDef {
@@ -94,6 +99,7 @@ const FAINTEST = 0.1
  */
 class Ember implements Scene {
   coverageBoost = 0
+  sounds: SoundEvent[] = []
   tint: Tint = 'normal'
   private core: AsciiFire
   private rng: Rng
@@ -177,6 +183,7 @@ class Ember implements Scene {
         if (tip < 0 || this.rng.f() >= chance) continue
         // A pilot only lets off the odd wisp of smoke, never a spark.
         const heat = s === 1 ? SMOKE_AT : 0.72 + 0.25 * this.rng.f()
+        if (heat > SMOKE_AT && this.sounds.length < 16) this.sounds.push({ kind: 'crack', v: heat })
         this.sparks.push({
           x: x * 2 + this.rng.f() * 2,
           y: tip * 4,

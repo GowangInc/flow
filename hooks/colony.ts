@@ -1,4 +1,4 @@
-// REVISION: flow-v82-aliases
+// REVISION: flow-v106-held
 //
 // A colony ship on the same dials as the fire: the level is its speed. A
 // long ship like the Avalon holds steady (nose to the right in the band,
@@ -29,6 +29,7 @@ import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, fitQuad, g, hash1 as hash, mix, NEAR, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
+import { hear, leadFrames, type SoundEvent } from './sound'
 
 /** Cells per frame the nearest stars travel at each level (0 = off). */
 const SPEED = [0, 0.012, 0.03, 0.06, 0.11, 0.19, 0.32, 0.52, 0.85, 1.35, 2.1]
@@ -80,7 +81,8 @@ const TAU = Math.PI * 2
 
 type Star = { u: number; v: number; layer: number; tw: number }
 /** A rock: `k` scales the level's drift speed. */
-type Rock = { a: number; c: number; dc: number; k: number; size: number; ang: number; spin: number; seed: number }
+/** A rock; `heard` once its strike has been sent to be played (ahead of it, see leadFrames). */
+type Rock = { a: number; c: number; dc: number; k: number; size: number; ang: number; spin: number; seed: number; heard?: boolean }
 type Mote = { a: number; c: number; va: number; vc: number; life: number; max: number }
 /** A strike on the shield: where, how long ago, and how big the rock was. */
 type Hit = { a: number; c: number; age: number; size: number }
@@ -109,6 +111,7 @@ type Geo = {
 export class Colony {
   strength = 8
   coverageBoost = 0
+  sounds: SoundEvent[] = []
   tint: Tint = 'normal'
   private columns = 0
   private rows = 0
@@ -289,12 +292,19 @@ export class Colony {
       })
     }
     const v = this.rockSpeed
+    const lead = leadFrames(this.strength, this.tint)
     this.rocks = this.rocks.filter(rock => {
       rock.a -= v * rock.k
       rock.c = clamp(rock.c + rock.dc, lo, hi - 1)
       rock.ang += rock.spin * (1 + v * 0.3)
       const r = ROCK_R[rock.size]!
-      if (rock.a - r * 0.75 > this.arcA(rock.c)) return true
+      const gap = rock.a - r * 0.75 - this.arcA(rock.c)
+      // The strike's boom goes out as the rock comes within the player's start-up time of the shield, so it lands with the flash.
+      if (!rock.heard && gap <= lead * v * rock.k) {
+        rock.heard = true
+        hear(this.sounds, { kind: 'hit', v: rock.size / 2 })
+      }
+      if (gap > 0) return true
       this.burn(rock)
       return false
     })
@@ -304,6 +314,7 @@ export class Colony {
   private burn(rock: Rock): void {
     const a = this.arcA(rock.c)
     this.hits.push({ a, c: rock.c, age: 0, size: rock.size })
+    if (!rock.heard) hear(this.sounds, { kind: 'hit', v: rock.size / 2 })
     const n = 6 + rock.size * 5
     const slope = (rock.c - this.geo.c0) / this.geo.Rc // the shield's tilt here
     for (let i = 0; i < n; i++) {

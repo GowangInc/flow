@@ -1,4 +1,4 @@
-// REVISION: flow-v81-scene-defs
+// REVISION: flow-v104-sound-stream
 //
 // A hot-air balloon in the sky world (sky.ts): the level is its target
 // altitude. At 1 it sits on the grass among trees and houses; it climbs past
@@ -13,6 +13,7 @@ import type { Cells } from './cells'
 import { g, hash, mix } from './pixels'
 import { skyColor, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
+import type { Ambience } from './sound'
 
 export { skyColor }
 
@@ -33,6 +34,11 @@ const C = {
 const SPRITE = [' ▄▆█▆▄ ', '███████', ' ▀█▀█▀ ', '  ╲█╱  '] as const
 
 export class Balloon extends SkyWorld {
+  ambience(): Ambience {
+    // The burner, lit while it climbs (as drawn), and the wind it climbs into.
+    return { burner: this.target > this.alt + 0.3 || this.strength >= 6 ? 1 : 0 }
+  }
+
   protected vehicleHeight(): number {
     return SPRITE.length
   }

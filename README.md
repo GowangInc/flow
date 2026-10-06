@@ -26,6 +26,27 @@ pi install git:github.com/robdmac/flow
 
 Mods are an early-access Claude Code feature, and their API may change between releases (see Compatibility below).
 
+### Not loading?
+
+If `/flow` doesn't exist after installing, run `claude --debug` and look for a line about **hooks modules**:
+
+- **"the rollout flag (tengu_plugin_hooks_modules) is off"**: mods from installed plugins are still being rolled out account by account, and yours doesn't have them yet. Update Claude Code (`claude update`), then turn them on yourself for one launch:
+
+  ```
+  CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude
+  ```
+
+  (`claude -r` instead of `claude` resumes your last session.) To keep it on, add it to `~/.claude/settings.json`:
+
+  ```json
+  "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" }
+  ```
+
+  or export it in your shell profile.
+- **"saved off by an earlier session"**: the flag was cached as off and hasn't refreshed yet. Start a new session, or use the setting above.
+- **"not available on Bedrock/Vertex/third-party providers"** or **"with a custom ANTHROPIC_BASE_URL"**: mods only run against the Anthropic API, so Flow can't load there.
+- **"until workspace trust is accepted"**: accept the trust prompt for the folder you started Claude in.
+
 ## The scenes
 
 Every scene has a level from 0 (off) to 10 (as busy as it gets).
@@ -76,9 +97,18 @@ A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes se
 | `/flow auto` | move with the agent's work (the default) |
 | `/flow 1`–`10` / `off` | hold a fixed level, or switch it off |
 | `/flow idle glow` / `dark` | in auto mode while idle: a low glow (the default), or nothing (the band gives its rows back) |
+| `/flow sound` | toggle a soundscape for the scene, swelling with the work (macOS; off by default); `/flow sound on` / `off` to set it |
 | `/flow band` / `spine` | a 5-row band above the prompt (the default; also `horizontal`, `bar` or `flat`), or a tall pane docked beside the transcript (also `portrait`, `vertical` or `side`) |
 | `/flow help` | list all of this |
 
+
+## Sound
+
+`/flow sound` (or *Sound* in `/config`) turns on a soundscape for each scene, and turns it off again, each one tuned against real recordings so it sounds like the thing itself: a campfire's sparse, bright crackle over the soft lick of its flames (and a bonfire's roar at the top), a beach's wash and its waves breaking now and then on a calm day, often on a rough one, a steam engine's chuffs in time with its crank, water bubbling and boiling, wind gusting round a balloon and its burner roaring, skis carving through snow, a rocket's roar and crackle matched to NASA's launch recordings. The colony ship and the warp drive are science fiction, so theirs are designed: the hull's hum, the shield fizzing, and a low, muffled boom through the hull as each rock blows up on it; the drive's hum climbing with speed.
+
+The background is long takes that blend one into the next at random moments, so nothing comes round on a beat, and a fresh one crossfades in whenever the level or the scene changes (a rocket on the pad, climbing, in orbit, coming home). On top of it you hear what happens on screen, as it happens: bubbles bursting, rocks blowing up on the shield, sparks, a wave breaking, each ski turn, the hammer, and the rockets' ignition, staging, the booster's sonic boom, the catch, parachutes and splashdown. Every scene follows the same loudness from level 1 (quiet) to 10.
+
+It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, so it's macOS only; elsewhere the setting does nothing. Several sessions open at once each play their own.
 
 ## Turning it off
 

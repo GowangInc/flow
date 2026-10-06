@@ -1,4 +1,4 @@
-// REVISION: flow-v82-aliases
+// REVISION: flow-v111-held
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -26,6 +26,7 @@ import type { Tint } from './styles'
 import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
 import { BRAILLE, clamp, fitQuad, g, hash1 as hash, mix, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
+import { hear, type Ambience, type SoundEvent } from './sound'
 
 /** Pixels of water texture that stream past per frame at each level. */
 const SPEED = [0, 0.05, 0.12, 0.22, 0.34, 0.48, 0.64, 0.82, 1.02, 1.26, 1.55]
@@ -173,6 +174,9 @@ function vnoise(x: number, seed: number): number {
 export class Surf {
   strength = 8
   coverageBoost = 0
+  sounds: SoundEvent[] = []
+  /** The frame the next wave's sound comes in on. */
+  private nextWave = 0
   tint: Tint = 'normal'
   /** Night: the moon instead of the sun, stars, and moonlight on the water. */
   night = false
@@ -386,9 +390,19 @@ export class Surf {
     this.kind[i] = kind
   }
 
+  ambience(): Ambience {
+    return { swell: this.s / 10, curl: this.curl }
+  }
+
   step(): void {
     if (this.columns === 0) return
     const level = this.level
+    // A wave coming in: about every 12 s on a calm sea, every 5.5 s on a big one (as measured at real
+    // beaches), never on a beat: each one sets the next at random around that.
+    if (this.s >= 1 && this.t >= this.nextWave) {
+      if (this.nextWave > 0) hear(this.sounds, { kind: this.s < 4 ? 'lap' : 'crash', v: this.s / 10 })
+      this.nextWave = this.t + Math.round((12.6 - 0.7 * this.s) * 14 * (0.6 + 0.8 * this.rng.f()))
+    }
     if (!this.started) {
       this.s = level
       this.speed = SPEED[level]!

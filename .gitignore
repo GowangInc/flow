@@ -3,3 +3,6 @@
 
 # npm install (the scene scripts)
 node_modules/
+
+# scripts/make-sounds.ts: the WAVs the clips are encoded from
+.sound-cache/

@@ -23,7 +23,8 @@
     "new-scene": "tsx scripts/new-scene.ts",
     "preview": "tsx scripts/preview.ts",
     "check": "tsx scripts/check.ts",
-    "sync": "tsx scripts/sync-manifest.ts"
+    "sync": "tsx scripts/sync-manifest.ts",
+    "sounds": "tsx scripts/make-sounds.ts"
   },
   "devDependencies": {
     "tsx": "^4.19.0"

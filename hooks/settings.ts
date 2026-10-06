@@ -1,4 +1,4 @@
-// REVISION: flow-v86-flat-side
+// REVISION: flow-v105-tips
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -23,6 +23,8 @@ const LAYOUTS: ReadonlyMap<string, FlowLayout> = new Map([
 ])
 /** Day or night for the scenes that have both: by the local `clock`, or pinned. */
 export type FlowTime = 'clock' | 'day' | 'night'
+/** Each scene's soundscape: off (the default) or on. */
+export type FlowSound = 'off' | 'on'
 export type FlowConfig = {
   mode: FlowMode
   style: SceneName
@@ -31,6 +33,7 @@ export type FlowConfig = {
   level: number
   layout: FlowLayout
   time: FlowTime
+  sound: FlowSound
 }
 /** The local time of day, as the adapter last read it. */
 export type Clock = { hour: number; minute: number }
@@ -60,6 +63,7 @@ export function readConfig(options: Readonly<Record<string, unknown>> | undefine
     level: Number.isInteger(level) && level >= 0 && level <= 10 ? level : DEFAULT_LEVEL,
     layout: o.layout === 'spine' ? 'spine' : 'band',
     time: o.time === 'day' || o.time === 'night' ? o.time : 'clock',
+    sound: o.sound === 'on' ? 'on' : 'off',
   }
 }
 
@@ -80,6 +84,8 @@ export type FlowCommand =
   | { kind: 'style'; name?: SceneName; time?: FlowTime }
   | { kind: 'layout'; layout?: FlowLayout }
   | { kind: 'time'; time: FlowTime }
+  /** Sound on or off; none given toggles it. */
+  | { kind: 'sound'; sound?: FlowSound }
   | { kind: 'error'; text: string }
 
 const SCENES = STYLES.join(', ')
@@ -114,6 +120,11 @@ export function parseFlowArgs(args: string): FlowCommand {
     const layout = LAYOUTS.get(b)
     if (layout) return { kind: 'layout', layout }
     return { kind: 'error', text: '! `/flow band` (above the prompt) or `/flow spine` (a tall side pane)' }
+  }
+  if (a === 'sound') {
+    if (b === undefined) return { kind: 'sound' }
+    if (b === 'on' || b === 'off') return { kind: 'sound', sound: b }
+    return { kind: 'error', text: '! `/flow sound` toggles the soundscape, or `/flow sound on` / `/flow sound off`' }
   }
   // `style <name>`, from before scenes were picked by name alone.
   if (a === 'style' && b !== undefined) return sceneCommand(b, undefined)
@@ -175,6 +186,7 @@ export function statusText(cfg: FlowConfig, levelNow: number, tint: string, cloc
   if (hasNight(cfg.style)) parts.push(timeText(cfg, clock))
   else if (cfg.time !== 'clock') parts.push(`${cfg.time} pinned (${cfg.style} has no night)`)
   if (cfg.layout === 'spine') parts.push('spine')
+  if (cfg.sound === 'on') parts.push('sound on')
   return `${parts.join(', ')}\nscenes: ${SCENES} · \`/flow next\` for another · \`/flow help\``
 }
 
@@ -190,6 +202,7 @@ export function helpText(agent = "Claude's", panes = true): string {
     `  /flow auto            move with ${agent} work (the default)`,
     '  /flow 1-10 | off      hold a level (10 is the busiest), or switch it off',
     '  /flow idle glow|dark  in auto mode while idle: a low glow, or nothing',
+    '  /flow sound [on|off]  a soundscape for each scene, swelling with the work (macOS); alone, toggles it',
   ]
   if (panes) {
     lines.push('  /flow band | spine    above the prompt, or a tall pane beside the transcript')
@@ -215,6 +228,8 @@ export function changesFor(cmd: FlowCommand, cfg: FlowConfig): Partial<FlowConfi
       return { layout: cmd.layout ?? (cfg.layout === 'band' ? 'spine' : 'band') }
     case 'time':
       return { time: cmd.time }
+    case 'sound':
+      return { sound: cmd.sound ?? (cfg.sound === 'on' ? 'off' : 'on') }
     default:
       return undefined
   }
@@ -235,6 +250,8 @@ export function changedText(cmd: FlowCommand, cfg: FlowConfig, agent: string, cl
       return cfg.level === 0 ? `off — ${BACK_TO_AUTO}` : `holding ${label(cfg.level)} — ${BACK_TO_AUTO}`
     case 'layout':
       return cfg.layout === 'spine' ? 'spine — a tall pane beside the transcript' : 'band — above the prompt'
+    case 'sound':
+      return cfg.sound === 'on' ? "sound on — each scene's soundscape, swelling with the work (macOS)" : 'sound off'
     case 'time': {
       const what =
         cfg.time === 'clock'
@@ -248,4 +265,52 @@ export function changedText(cmd: FlowCommand, cfg: FlowConfig, agent: string, cl
     default:
       return ''
   }
+}
+
+/**
+ * What the one-time tips know (kept in the store): whether another scene and
+ * the sound have ever been on, which tips have been given, and how many
+ * chances (a `/flow`, a session starting) have passed since the scenes tip.
+ */
+export type Tips = { otherScene?: boolean; triedSound?: boolean; scenesTold?: boolean; soundTold?: boolean; since?: number }
+
+/** Chances after the scenes tip before the sound tip. */
+const SOUND_TIP_AFTER = 3
+
+/** Reads stored tips, leaving out anything that isn't one. */
+export function readTips(v: unknown): Tips {
+  if (!v || typeof v !== 'object') return {}
+  const o = v as Record<string, unknown>
+  const t: Tips = {}
+  for (const k of ['otherScene', 'triedSound', 'scenesTold', 'soundTold'] as const) if (o[k] === true) t[k] = true
+  if (typeof o.since === 'number' && Number.isInteger(o.since) && o.since >= 0) t.since = o.since
+  return t
+}
+
+/**
+ * A chance to give a tip (a `/flow` just run, or a session starting), with the
+ * settings as they now are: the tip to give, if any, and the tips to keep.
+ * Once ever: the other scenes, while it's still the fire and none other has
+ * been on; then, three chances on, the sound, if it has never been on.
+ */
+export function nextTip(tips: Tips, cfg: FlowConfig): { tip?: string; tips: Tips } {
+  const t: Tips = { ...tips }
+  if (cfg.style !== 'fire') t.otherScene = true
+  if (cfg.sound === 'on') t.triedSound = true
+  if (!t.scenesTold) {
+    t.scenesTold = true
+    t.since = 0
+    if (!t.otherScene)
+      return {
+        tip: `flow: the fire is one of ${STYLES.length} scenes (${STYLES.filter(s => s !== 'fire').join(', ')}): \`/flow next\` steps through them, or \`/flow <name>\` picks one.`,
+        tips: t,
+      }
+    return { tips: t }
+  }
+  if (t.soundTold) return { tips: t }
+  if (t.triedSound) return { tips: { ...t, soundTold: true } }
+  t.since = (t.since ?? 0) + 1
+  if (t.since < SOUND_TIP_AFTER) return { tips: t }
+  t.soundTold = true
+  return { tip: 'flow: every scene has a soundscape too, swelling with the work: `/flow sound` turns it on (macOS).', tips: t }
 }

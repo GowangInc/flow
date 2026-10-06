@@ -1,4 +1,4 @@
-// REVISION: flow-v85-stronger-top
+// REVISION: flow-v104-sound-stream
 //
 // Bubbles (the `bubbles` style): a glass of fizz on the same dials as the
 // fire; the level is the fizz. At 1 a couple of airstones let lazy bubbles
@@ -20,6 +20,7 @@
 // creamy line of head at the top.
 
 import { Cells, Rng } from './cells'
+import type { SoundEvent } from './sound'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, hash1, mix } from './pixels'
 import { defineScene } from './scene-def'
@@ -74,6 +75,7 @@ function ramp(stops: readonly number[], b: number): number {
 export class Bubbles {
   strength = 8
   coverageBoost = 0
+  sounds: SoundEvent[] = []
   tint: Tint = 'normal'
   /** Night: a stout instead of water. */
   night = false
@@ -312,6 +314,7 @@ export class Bubbles {
   private pop(b: Bubble): void {
     const amp = 0.35 + b.r * 0.35
     if (this.ripples.length < 120) this.ripples.push({ x: b.x, age: 0, amp })
+    if (this.sounds.length < 24) this.sounds.push({ kind: 'pop', v: Math.min(1, b.r / 2.5) })
     const n = b.r < 0.7 ? (this.rng.f() < 0.3 ? 1 : 0) : Math.round(1 + b.r * 1.2 + this.rng.f() * 2)
     for (let i = 0; i < n && this.drops.length < MAX_DROPS; i++) {
       const a = (this.rng.f() - 0.5) * 2.2

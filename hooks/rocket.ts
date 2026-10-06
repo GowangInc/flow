@@ -1,4 +1,4 @@
-// REVISION: flow-v102-review-fixes
+// REVISION: flow-v109-held
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -50,6 +50,7 @@ import { STAR, STAR_DIM } from './night'
 import { fitQuad, g, hash, lowerBlock, mix, QUAD, type QuadFit } from './pixels'
 import { type SceneryCell, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
+import { hear, type Ambience, type SoundEvent } from './sound'
 
 const ceilEven = (n: number) => n + (n & 1)
 
@@ -414,6 +415,37 @@ const LIMB = 0x6cb4f2
 const OCEAN = 0x1d4e8e
 
 abstract class LaunchSite extends SkyWorld {
+  /** What just happened, to be heard (the split screen's booster's too). */
+  sounds: SoundEvent[] = []
+
+  /** What it's doing now: engines burning, fuel venting, air rushing past, the quiet of orbit. */
+  ambience(): Ambience {
+    const own = this.ownAmbience()
+    // With the booster's side of the split screen open, it's heard too (its fall, its landing burn), and the
+    // loudest of the two wins; orbit's quiet gives way to it.
+    const t = this.twinSite
+    if (!t) return own
+    const b = t.ownAmbience()
+    const roar = Math.max((own.roar ?? 0) * (1 - (own.space ?? 0)), b.roar ?? 0)
+    return { roar, vent: Math.max(own.vent ?? 0, b.vent ?? 0), wind: Math.max(own.wind ?? 0, b.wind ?? 0), space: 0, sea: Math.max(own.sea ?? 0, b.sea ?? 0) }
+  }
+
+  /** What this site alone is doing, for the soundscape. */
+  protected ownAmbience(): Ambience {
+    const st = this.state
+    const p = this.part
+    const flying = st === 'fly'
+    const engines = p === 'dragon' || p === 'capsule' ? 0 : this.thr
+    return {
+      roar: engines,
+      vent: st === 'rest' || st === 'ignite' || st === 'landed' || st === 'stack' ? 1 : 0,
+      wind: flying && this.orbit < 0.5 ? Math.min(1, Math.abs(this.v) / 1.2) * (this.chute ? 0.4 : 1) : 0,
+      space: this.orbit,
+      // In the water, or carried over it (the sea under the view as it slides back).
+      sea: (st === 'landed' && (p === 'capsule' || (this.look.catches && !this.boosterOnly))) || st === 'pan' || (st === 'carry' && this.look.catches) ? 1 : 0,
+    }
+  }
+
   protected abstract readonly specs: [band: Spec, tall: Spec]
   protected abstract readonly look: Look
   /** Another site like this one, for the split screen. */
@@ -503,6 +535,8 @@ abstract class LaunchSite extends SkyWorld {
   private boosterOnly = false
   /** Starship's booster is back on the mount, waiting for the Ship. */
   private boosterHome = false
+  /** The split screen's booster has made its sonic boom. */
+  private boomed = false
   /** Splash: frames since the Ship came down in the sea (spray). */
   private splash = 0
   /** The recovery vessel's place along the ground (pixels): a barge on the sea, a transporter on land; NaN when there's none. */
@@ -939,7 +973,10 @@ abstract class LaunchSite extends SkyWorld {
         }
         this.reach = Math.max(0, this.reach - 1 / CLOSE)
         this.service = Math.min(1, this.service + 0.05)
-        if (!home) this.go('ignite')
+        if (!home) {
+          this.go('ignite')
+          hear(this.sounds, { kind: 'ignite', v: 1 })
+        }
         break
       case 'ignite':
         this.alt = rest
@@ -967,6 +1004,11 @@ abstract class LaunchSite extends SkyWorld {
           // Super Heavy's boostback, seconds after staging, turns it for the
           // tower; Falcon's entry burn, high up, takes the edge off the heating.
           if (catches ? this.flyTime < 136 : this.staged === 4 && this.sinceStage < 14) thrGoal = 0.5
+          // Back down into the thick air, supersonic: its sonic boom, heard on the ground.
+          if (this.staged <= 3 && !this.boomed) {
+            this.boomed = true
+            hear(this.sounds, { kind: 'sonic', v: 1 })
+          }
           break
         }
         if (!homeward) {
@@ -1043,6 +1085,7 @@ abstract class LaunchSite extends SkyWorld {
           const want = this.burn < 115 ? 1 : 2
           if (want !== this.chute) {
             this.chute = want
+            hear(this.sounds, { kind: 'chute', v: want / 2 })
             this.chuteOpen = 0
           }
           this.chuteOpen = Math.min(1, this.chuteOpen + 0.06)
@@ -1056,6 +1099,7 @@ abstract class LaunchSite extends SkyWorld {
             this.v = 0
             this.pos = this.view = this.seaX()
             this.splash = 1
+            hear(this.sounds, { kind: 'splash', v: 0.6 })
             this.go('landed')
           }
           break
@@ -1093,6 +1137,7 @@ abstract class LaunchSite extends SkyWorld {
           this.pos = this.view = this.lz
           this.go(shipHome ? 'landed' : catches ? 'catch' : 'landed')
           if (shipHome) this.splash = 1
+          hear(this.sounds, { kind: shipHome ? 'splash' : catches ? 'clang' : 'thud', v: 1 })
         } else this.alt += this.v
         if (catches && !shipHome) armGoal = s.armCatch
         break
@@ -1152,7 +1197,10 @@ abstract class LaunchSite extends SkyWorld {
         if (this.timer * hurry < 30) {
           this.flop = Math.min(1, this.flop + 0.05 * hurry)
           this.alt = sea - this.flop * lie
-          if (this.timer === 16 && hurry === 1) this.boom = 1
+          if (this.timer === 16 && hurry === 1) {
+            this.boom = 1
+            hear(this.sounds, { kind: 'boom', v: 1 })
+          }
           break
         }
         if (!Number.isFinite(this.carrierX)) this.carrierX = this.pos + this.pw / 2 + 2 * s.fly.w
@@ -1336,6 +1384,7 @@ abstract class LaunchSite extends SkyWorld {
   private separate(): void {
     this.part = 'upper'
     this.thr = 0
+    hear(this.sounds, { kind: 'sep', v: 1 })
     this.ghost = { part: 'booster', d: 0, v: -0.05, acc: -0.025, life: 48, max: 48 }
     // The booster turns back: once it's fallen out of frame, a split screen
     // follows it down (side by side in the band, top and bottom in a tall
@@ -1425,6 +1474,9 @@ abstract class LaunchSite extends SkyWorld {
     t.tint = this.tint
     t.strength = 1
     t.step()
+    // The booster's side of the split screen is heard too.
+    for (const e of t.sounds) if (this.sounds.length < 16) this.sounds.push(e)
+    t.sounds.length = 0
     // Down: on the mount in the arms, or on its legs at the landing zone.
     if (t.state === 'rest' || t.state === 'landed') this.twinDone++
     // In over a second; once the booster's been down a moment, out again.
