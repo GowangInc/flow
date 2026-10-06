@@ -251,7 +251,8 @@ test('calibration: a streamed answer sits below an edit-test loop', async () => 
 })
 
 test('calibration: a swarm of reading subagents stays below 10; editing ones reach it', async () => {
-  const readers = simulate(60, (h, t) => {
+  // (Over 30 s: a turn running longer climbs a level each 30 s on purpose, below.)
+  const readers = simulate(30, (h, t) => {
     h.runningAgents = 4
     for (let a = 0; a < 4; a++) {
       if (tickOf(t + a * 0.5, 2)) {
@@ -284,6 +285,27 @@ test('calibration: a blocked tool keeps a low burn; a burst cools back to idle',
   expect(h.strength(1)).toBe(1)
   expect(h.strength(0)).toBe(0)
   expect(h.isGlowing).toBe(false)
+})
+
+test('a turn that keeps going climbs a level every 30 s, and starts over with the next turn', async () => {
+  const h = new Activity()
+  h.turnStarted()
+  h.modelStep(undefined) // the default floor, 3
+  const at = (seconds: number) => {
+    while (h.turnFrames * 0.07 < seconds) h.tick()
+    return h.strength(1)
+  }
+  expect(at(29)).toBe(3)
+  expect(at(31)).toBe(4)
+  expect(at(61)).toBe(5)
+  h.turnStarted() // (raised again within the turn: it keeps counting)
+  expect(at(91)).toBe(6)
+  expect(at(600)).toBe(10) // never past 10
+  h.turnEnded()
+  expect(h.strength(1)).toBeLessThanOrEqual(1 + Math.round(h.heat))
+  h.turnStarted()
+  h.modelStep(undefined)
+  expect(h.strength(1)).toBe(3)
 })
 
 test("a subagent's model step never moves the main turn's effort floor", async () => {

@@ -1,9 +1,10 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v62-turn-time
 //
 // How busy the agent is: the work → scene mapping for `/flow auto`. Events
 // add "heat" (the metaphor from when the only scene was a fire), the heat
 // cools every frame, and `strength()` turns it into the scene's 0..=10 dial
-// (a fire's height, the swell, the balloon's altitude, ...). It also says
+// (a fire's height, the swell, the balloon's altitude, ...), and a turn that
+// keeps going climbs a level every 30 s besides. It also says
 // which tint shows: smoke after a failure or a compaction, blue when the
 // context is nearly full. Pure: no `$`, so it is unit-tested directly.
 //
@@ -23,6 +24,9 @@ const STREAM_PER_CHAR = 0.002
 const STREAM_CAP = 0.025
 /** Activity from a subagent's loop counts at this weight (its count adds the rest). */
 const SUBAGENT_WEIGHT = 0.5
+/** A turn's running time adds a level every TURN_STEP_MS (frames are 70 ms). */
+const FRAME_MS = 70
+const TURN_STEP_MS = 30_000
 /** Frames of gray tips after a failed command / a compaction. */
 const FAIL_SMOKE = 30
 const COMPACT_SMOKE = 40
@@ -52,6 +56,8 @@ export class Activity {
   floor = 3
   smokeFrames = 0
   contextPercent = 0
+  /** Frames this turn has been running (none between turns). */
+  turnFrames = 0
   /** Streamed characters since the last tick, weighted. */
   private pendingChars = 0
 
@@ -60,11 +66,13 @@ export class Activity {
   }
 
   turnStarted(): void {
+    if (!this.isTurnActive) this.turnFrames = 0
     this.isTurnActive = true
   }
 
   turnEnded(): void {
     this.isTurnActive = false
+    this.turnFrames = 0
   }
 
   /** One model request. Only the main loop's sets the effort floor. */
@@ -122,8 +130,14 @@ export class Activity {
     return this.runningAgents > 0 ? 1.2 * Math.log2(1 + this.runningAgents) : 0
   }
 
+  /** Levels from how long this turn has been going: one for every 30 s. */
+  get turnBoost(): number {
+    return this.isTurnActive ? Math.floor((this.turnFrames * FRAME_MS) / TURN_STEP_MS) : 0
+  }
+
   /** Advance `frames` frames (a slow tick covers several) of cooling. */
   tick(frames = 1): void {
+    if (this.isTurnActive) this.turnFrames += frames
     if (this.pendingChars > 0) {
       this.add(Math.min(STREAM_CAP * frames, this.pendingChars * STREAM_PER_CHAR))
       this.pendingChars = 0
@@ -137,13 +151,14 @@ export class Activity {
 
   /**
    * The dial for this frame. Idle: the idle floor (0 or 1) plus whatever is
-   * still cooling. A turn: its effort floor + heat + the subagent boost.
-   * Subagents alone (the turn over): from 1, + heat + their boost.
+   * still cooling. A turn: its effort floor + heat + the subagent boost + a
+   * level for every 30 s it has run. Subagents alone (the turn over): from 1,
+   * + heat + their boost.
    */
   strength(idleFloor: number): number {
     if (!this.isWorking) return Math.max(0, Math.min(10, Math.round(idleFloor + this.heat)))
     const base = this.isTurnActive ? this.floor : 1
-    return Math.max(1, Math.min(10, Math.round(base + this.heat + this.agentBoost)))
+    return Math.max(1, Math.min(10, Math.round(base + this.heat + this.agentBoost) + this.turnBoost))
   }
 
   /** How much company subagents add (a wider fire, more boats, wingmen): 15 per running subagent. */

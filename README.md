@@ -73,6 +73,7 @@ Balloon, falcon, starship, surf and ski also have a **night** version: stars, a 
 |---|---|
 | idle | a low glow (or nothing, if you choose) |
 | in a turn | rises to a level set by effort: `low` 2, default 3, `high` 4, `xhigh` 5, `max` 6 |
+| working a while | one level more for every 30 s the turn has run |
 | streaming an answer | keeps going (limited per second, so plain chat sits mid-range) |
 | editing files | pushes higher, scaled by the lines written |
 | running commands | sparks; a slow command keeps it ticking over |
@@ -80,7 +81,7 @@ Balloon, falcon, starship, surf and ski also have a **night** version: stars, a 
 | hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey |
 | near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame |
 
-A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel.
+A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel, or a long turn: it climbs a level every 30 s it keeps going.
 
 ## The command
 
@@ -120,7 +121,7 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 
 | pi event | The scene |
 |---|---|
-| `agent_start` / `agent_end` | a turn lifts it, then it settles to idle |
+| `agent_start` / `agent_end` | a turn lifts it (a level more for every 30 s it runs), then it settles to idle |
 | `turn_start` | rises to the floor for `ctx.thinkingLevel` (`minimal`/`low` 2 … `max` 6) |
 | `message_update` deltas | streamed text and thinking keep it going |
 | `tool_call` | `write`/`edit` push it by lines written, `bash` sparks, reads flicker |
