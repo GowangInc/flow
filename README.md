@@ -1,8 +1,10 @@
 # flow
 
+<img width="1200" height="384" alt="Flow's fire above the prompt: pilot lights at idle, climbing with each of Claude's tool calls, an inferno with three subagents, then back down when Claude is done" src="https://github.com/user-attachments/assets/0f0120cc-af23-44ec-9398-309cccd42764" />
+
 Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, and a colony ship behind its shield. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
 
-https://github.com/user-attachments/assets/aad7c890-f275-4329-8715-58e3c0f1ec04
+https://github.com/user-attachments/assets/191a662b-9c5d-4d18-b35c-4d054988b98d
 
 By Rob Macrae.
 
