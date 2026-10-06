@@ -86,6 +86,7 @@ The engine validates the module before it runs (`claude plugin validate .`):
 - So `/flow` applies its change at once and keeps it in `$.store` (`overrides`), not `/config`. The store is shared by every session: writes merge into it, and only fields still holding the value written are cleared.
 - The overrides are written through to `/config` at `session.end`. A change made in `/config` itself wins over a pending one.
 - pi keeps its settings in `~/.pi/agent/flow.json`.
+- The band and the spine's pane show only while the scene does (`SceneDriver.isShown()`): `/flow off`, or auto's dark idle between turns, gives their rows back. The pane is closed by the plugin then (so the layout stays spine; only you closing it means you'd rather have the band) and reopens with the scene.
 - `/flow` is the only command. Don't add aliases.
 - One-time tips (`nextTip` in `settings.ts`, kept in `$.store` under `tips`): at the first chance (a `/flow`, or an interactive session starting, as a toast) while it's still the fire and no other scene has been on, the other scenes; three chances later, if the sound has never been on, the sound.
 

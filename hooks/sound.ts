@@ -1,4 +1,4 @@
-// REVISION: flow-v117-one-bed
+// REVISION: flow-v118-clunk
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -318,7 +318,7 @@ export const EVENTS: Partial<Record<SoundKind, { clip: string; variants: number;
   splash: { clip: 'events/splash', variants: 1, gain: v => 0.5 + 0.5 * v },
   thud: { clip: 'events/thud', variants: 1, gain: () => 0.8 },
   chute: { clip: 'events/chute', variants: 1, gain: () => 0.7 },
-  clang: { clip: 'events/clang', variants: 1, gain: () => 0.8 },
+  clang: { clip: 'events/clang', variants: 3, gain: () => 0.8 },
   crash: { clip: 'events/wave', variants: 3, gain: v => 0.3 + 0.9 * v },
   chuff: { clip: 'events/chuff', variants: 3, gain: v => 0.6 + 0.9 * v },
   hit: { clip: 'events/blast', variants: 3, gain: v => 1.1 + 0.2 * v },

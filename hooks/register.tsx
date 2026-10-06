@@ -1,4 +1,4 @@
-// REVISION: flow-v117-play-budget
+// REVISION: flow-v118-spine-hides
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -224,13 +224,20 @@ async function sceneReply($: EngineInterface, e: CommandRunInput, ctx: SceneCtx)
   $.ui.invalidate('ui.render')
   ctx.applyLocal(changes) // the scene carries on: 6 → 8 eases up from 6
   let note = (await keepOverrides($, changes)) ? '' : '  (not saved)'
-  if (changes.layout === 'spine') {
-    // Asked for, the pane is placed at any width: docked in fullscreen, else inline.
-    const opened = await $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS })
-    if (!opened.isPlaced) note += '  (no room for the pane yet: widen the terminal)'
-  } else if (changes.layout === 'band') {
+  if (changes.layout === 'band') {
     ctx.leftSpine()
     await $.ui.close({ id: SPINE })
+  } else if (cfg.layout === 'spine') {
+    // The pane shows while the scene does, as the band does: off (or dark idle) closes it, back on opens it.
+    // Asked for, it's placed at any width: docked in fullscreen, else inline.
+    const shown = driver.isShown()
+    if (shown && (changes.layout === 'spine' || !(await spineIsUp($)))) {
+      const opened = await $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS })
+      if (!opened.isPlaced) note += '  (no room for the pane yet: widen the terminal)'
+    } else if (!shown && (await spineIsUp($))) {
+      ctx.leftSpine()
+      await $.ui.close({ id: SPINE })
+    }
   }
   return { text: `${changedText(cmd, cfg, "Claude's", driver.clock)}${note}` }
 }
@@ -477,6 +484,15 @@ export const register: Register = (on, options) => {
       if (shown !== wasShown) {
         wasShown = shown
         $.ui.invalidate('ui.render')
+        // The spine's pane, likewise: up while the scene shows, closed (unasked: a plugin's close) when not.
+        if (cfg.layout === 'spine') {
+          if (shown) void $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS }).catch(() => {})
+          else {
+            if (mounted?.requestId === SPINE) mounted = null
+            desktopSites.delete(SPINE)
+            void $.ui.close({ id: SPINE }).catch(() => {})
+          }
+        }
       }
       if (desk) {
         // Desktop steps its own scene here and redraws its Svg.
@@ -509,7 +525,7 @@ export const register: Register = (on, options) => {
 
     // The pane outlives a reload: one left up from a spine layout that /config
     // has since changed to the band would otherwise draw beside it.
-    if (cfg.layout === 'spine') {
+    if (cfg.layout === 'spine' && driver.isShown()) {
       // Unasked, a pane docks only from 144 columns; below that it waits.
       void $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS })
     } else if (await spineIsUp($)) {

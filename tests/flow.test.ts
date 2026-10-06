@@ -629,6 +629,33 @@ test('/flow sound toggles it: on, the soundscape plays; off again, it stops at o
   await ui.unmount()
 })
 
+test('spine: the pane hides while flow is off, as the band does, and comes back with it', { options: { mode: 'manual', level: 5, layout: 'spine' } }, async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  const panes = new Set<string>()
+  const calls: string[] = []
+  on('ui.open', (_, e) => {
+    panes.add((e as { id: string }).id)
+    calls.push('open')
+    return { value: { isPlaced: true } }
+  })
+  on('ui.close', (_, e) => {
+    panes.delete((e as { id: string }).id)
+    calls.push('close')
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({ value: [...panes].map(id => ({ id })) }))
+  await start($)
+  expect(panes.has('flow')).toBe(true)
+  expect(await flow($, '0')).toContain('off')
+  expect(panes.has('flow')).toBe(false)
+  expect(await flow($, '5')).toContain('holding 5/10')
+  expect(panes.has('flow')).toBe(true)
+  // Still the spine: the pane closing itself isn't you asking for the band.
+  expect(await flow($, '')).toContain('spine')
+})
+
 test('sound off (the default): nothing plays', async ($, on) => {
   const clock = mock.clock(on)
   mock.store(on)

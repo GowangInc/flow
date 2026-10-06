@@ -1,4 +1,4 @@
-// REVISION: flow-v118-one-bed
+// REVISION: flow-v119-no-tones
 //
 // Builds the soundscapes' clips into sounds/ (AAC, mono 22.05 kHz) and the
 // manifest hooks/sound-files.ts. Each recipe makes a WAV with sox (and Node,
@@ -331,6 +331,40 @@ function explosion(path: string, seed: number, seconds: number, open: number): v
   wav(path, x)
 }
 
+/**
+ * A heavy steel clunk, all noise: a dull thump, and a strike's rattle through
+ * a few broad, inharmonic resonances that die in a tenth of a second (narrow
+ * ones would ring as a chord: a synth, not steel).
+ */
+function clunk(path: string, seed: number): void {
+  const r = rng(seed)
+  const x = new Float32Array(Math.ceil(1.2 * RATE))
+  let lp = 0
+  for (let i = 0; i < x.length; i++) {
+    const t = i / RATE
+    lp += 0.04 * ((r() * 2 - 1) - lp)
+    x[i] = lp * 5 * Math.min(1, t / 0.002) * Math.exp(-t / 0.09)
+  }
+  for (const [hz, q, amp] of [[380, 12, 0.5], [1050, 14, 0.35], [2240, 16, 0.25], [3500, 18, 0.15]] as const) {
+    const rad = 1 - (Math.PI * hz) / q / RATE
+    const c = 2 * rad * Math.cos((2 * Math.PI * hz * (0.97 + 0.06 * r())) / RATE)
+    let y1 = 0
+    let y2 = 0
+    for (let i = 0; i < x.length; i++) {
+      const t = i / RATE
+      const e = (r() * 2 - 1) * Math.exp(-t / 0.012)
+      const y = e * (1 - rad) + c * y1 - rad * rad * y2
+      y2 = y1
+      y1 = y
+      x[i]! += y * amp * 6 * Math.exp(-t / 0.11)
+    }
+  }
+  let max = 1e-6
+  for (const v of x) max = Math.max(max, Math.abs(v))
+  for (let i = 0; i < x.length; i++) x[i]! /= max
+  wav(path, x)
+}
+
 /** An N-wave (a sonic boom's pressure: a jump, a straight fall through zero, a jump back), `ms` long, at `at` s. */
 function nwave(x: Float32Array, at: number, ms: number, amp: number): void {
   const i0 = Math.floor(at * RATE)
@@ -366,8 +400,11 @@ const RECIPES: Record<string, Record<string, Recipe>> = {
     space: {
       variants: 3,
       make: (out, t) => {
-        hum(t.tmp('s.wav'), seedOf(out), SLEN, [[55, 0.4], [110, 0.3], [165, 0.15]], 260)
-        fx([t.tmp('s.wav')], out, 'overdrive', 4, 'gain', '-n', -14, ...bedEnd(t, false))
+        // (Broad resonances: a rumble, not a tone; narrow ones droned.)
+        hum(t.tmp('s.wav'), seedOf(out), SLEN, [[55, 0.4], [110, 0.25], [165, 0.1]], 10)
+        synth(t.tmp('r.wav'), 'synth', SLEN, 'brownnoise', 'lowpass', 260, 'gain', -10)
+        turbulence(t.tmp('r.wav'), seedOf(out) + 1, [[0.2, 0.3]])
+        fx([t.tmp('s.wav'), t.tmp('r.wav')], out, 'gain', '-n', -14, ...bedEnd(t, false))
       },
     },
   },
@@ -681,14 +718,11 @@ const RECIPES: Record<string, Record<string, Recipe>> = {
       },
     },
     clang: {
-      // The chopsticks closing: steel on steel, ringing.
+      // The chopsticks closing on the booster: a heavy steel clunk (see clunk), no ringing tones.
+      variants: 3,
       make: (out, t) => {
-        // (sox won't chain tone generators with `synth … mix`: each its own file, then mixed.)
-        const tones = [196, 293, 467, 701].map((hz, i) => {
-          synth(t.tmp(`p${i}.wav`), 'synth', 1.6, 'pluck', hz, 'gain', -i * 3)
-          return t.tmp(`p${i}.wav`)
-        })
-        fx(tones, out, 'overdrive', 6, 'reverb', 60, 50, 90, 'gain', '-n', -3)
+        clunk(t.tmp('c.wav'), 190 + t.v * 17)
+        fx([t.tmp('c.wav')], out, 'reverb', 45, 90, 80, 'gain', '-n', -3)
       },
     },
   },

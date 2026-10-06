@@ -1,4 +1,4 @@
-// REVISION: flow-v107-sound-levels
+// REVISION: flow-v108-twin-heard
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -420,6 +420,18 @@ abstract class LaunchSite extends SkyWorld {
 
   /** What it's doing now: engines burning, fuel venting, air rushing past, the quiet of orbit. */
   ambience(): Ambience {
+    const own = this.ownAmbience()
+    // With the booster's side of the split screen open, it's heard too (its fall, its landing burn), and the
+    // loudest of the two wins; orbit's quiet gives way to it.
+    const t = this.twinSite
+    if (!t) return own
+    const b = t.ownAmbience()
+    const roar = Math.max((own.roar ?? 0) * (1 - (own.space ?? 0)), b.roar ?? 0)
+    return { roar, vent: Math.max(own.vent ?? 0, b.vent ?? 0), wind: Math.max(own.wind ?? 0, b.wind ?? 0), space: 0, sea: Math.max(own.sea ?? 0, b.sea ?? 0) }
+  }
+
+  /** What this site alone is doing, for the soundscape. */
+  protected ownAmbience(): Ambience {
     const st = this.state
     const p = this.part
     const flying = st === 'fly'
