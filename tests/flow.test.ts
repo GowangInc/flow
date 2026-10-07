@@ -308,6 +308,30 @@ test('a turn that keeps going climbs a level every 30 s, and starts over with th
   expect(h.strength(1)).toBe(3)
 })
 
+test("a turn's 30 s clock stops while it waits on the person (a permission, a question), and goes on after", async () => {
+  const h = new Activity()
+  h.turnStarted()
+  h.modelStep(undefined)
+  const run = (seconds: number) => {
+    for (let i = 0; i < Math.round(seconds / 0.07); i++) h.tick()
+  }
+  run(20)
+  h.waitingOn('toolu_1') // a permission prompt, left a minute
+  h.waitingOn('toolu_2') // and Claude's question beside it
+  run(60)
+  expect(h.isWaiting).toBe(true)
+  expect(h.turnBoost).toBe(0)
+  h.answered('toolu_1')
+  run(5)
+  expect(h.turnBoost).toBe(0) // the question still waits
+  h.answered('toolu_2')
+  run(11) // 20 s + 11 s of work: past 30
+  expect(h.turnBoost).toBe(1)
+  h.waitingOn('toolu_3')
+  h.turnEnded() // the turn ending forgets what waited
+  expect(h.isWaiting).toBe(false)
+})
+
 test("a subagent's model step never moves the main turn's effort floor", async () => {
   const h = new Activity()
   h.turnStarted()

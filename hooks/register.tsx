@@ -1,4 +1,4 @@
-// REVISION: flow-v119-sound-gen
+// REVISION: flow-v119-turn-waits
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -69,6 +69,8 @@ const SPINE = 'flow'
 const SPINE_COLUMNS = 13
 const SPINE_INLINE_ROWS = 12 // when not fullscreen, it sits above the prompt
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LSP', 'WebFetch', 'WebSearch'])
+/** Tools that are the person's to answer: Claude's question, a plan to approve. The turn's clock stops while one is open. */
+const PERSON_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
 /** Store keys from before settings moved to userConfig (and v3's `drop`). */
 const LEGACY_KEYS = ['mode', 'strength', 'idle', 'style', 'drop'] as const
 
@@ -624,13 +626,26 @@ export const register: Register = (on, options) => {
     else if (READ_TOOLS.has(e.tool)) activity.read(isSubagent)
 
     activity.toolsInFlight++
+    const id = e.tool_use_id
+    if (id && PERSON_TOOLS.has(e.tool)) activity.waitingOn(id)
     try {
       const result = await next(e)
       if (e.tool === 'Bash' && 'isError' in result && result.isError) activity.failed()
       return result
     } finally {
       activity.toolsInFlight--
+      // (Answered, or over: a permission ask from tool.check ends here too.)
+      if (id) activity.answered(id)
     }
+  })
+
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    // An ask is put to the person (in the default mode; auto's classifier decides alone): the turn's clock
+    // waits until the call is over. (There's no word of when they answer, so a command they approve runs
+    // uncounted too: it errs on the side of a lower level, never a higher one.)
+    if (verdict.decision === 'ask' && e.tool_use_id) activity.waitingOn(e.tool_use_id)
+    return verdict
   })
 
   on('session.compact', async ($, e, next) => {
