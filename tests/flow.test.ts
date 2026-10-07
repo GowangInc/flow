@@ -1,4 +1,4 @@
-// REVISION: flow-v128-note-tips
+// REVISION: flow-v129-quiet-exit
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -837,6 +837,27 @@ test('/flow sound toggles it: on, the soundscape plays; off again, it stops at o
   expect(await flow($, 'sound')).toContain('sound off')
   await clock.advance(5000)
   expect((seen.plays ?? []).length).toBe(playing)
+  await ui.unmount()
+})
+
+test('the session ending stops the soundscape for good (Claude Code quitting leaves nothing playing); after a /clear it plays on', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(3000)
+  const plays = () => (seen.plays ?? []).length
+  // A /clear: the process goes on under another id, and so does the sound.
+  await endSession($, 'clear', 'session-a')
+  let before = plays()
+  await clock.advance(3000)
+  expect(plays()).toBeGreaterThan(before)
+  // Quitting: the frames still running till the process goes start nothing (a clip begun now outlives it).
+  await endSession($, 'prompt_input_exit', 'session-a')
+  before = plays()
+  await clock.advance(5000)
+  expect(plays()).toBe(before)
   await ui.unmount()
 })
 

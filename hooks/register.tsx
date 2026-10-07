@@ -1,4 +1,4 @@
-// REVISION: flow-v126-note-tips
+// REVISION: flow-v127-quiet-exit
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -77,7 +77,7 @@ import { frameSvg } from './svg'
 import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent } from './sound'
 
 
-const FLOW_REVISION = 'flow-v126-note-tips'
+const FLOW_REVISION = 'flow-v127-quiet-exit'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -575,6 +575,11 @@ export const register: Register = (on, options) => {
     events: [] as AbortController[],
     seed: 1,
     scene: '',
+    /**
+     * The session has ended for good (Claude Code quitting): the frames still running till the process goes
+     * start nothing, as a clip begun then outlives it and plays out in full.
+     */
+    over: false,
   }
   /**
    * Whether what was scheduled in generation `gen` may still play: the soundscape hasn't stopped since, and
@@ -713,7 +718,7 @@ export const register: Register = (on, options) => {
       // The soundscape, while the scene is on screen: beds crossfading one
       // into the next, and what happens on screen heard as it happens.
       sound.clock += elapsed
-      const heard = cfg.sound === 'on' && (site || desk) && driver.isShown()
+      const heard = !sound.over && cfg.sound === 'on' && (site || desk) && driver.isShown()
       const shownScene = site ? driver.scene : desk ? desktopDriver.scene : undefined
       const events: SoundEvent[] = []
       for (const sc of [driver.scene, desktopDriver.scene]) {
@@ -993,8 +998,10 @@ export const register: Register = (on, options) => {
   on('command.run', { command: COMMAND }, ($, e) => runScene($, e, sceneCtx))
 
   on('session.end', async ($, e, next) => {
-    // The soundscape stops with the session. Its settings were kept as they
-    // changed: nothing is written to /config (only `/flow save` does that).
+    // The soundscape stops with the session, for good unless the process goes
+    // on (a /clear, a resume). Its settings were kept as they changed: nothing
+    // is written to /config (only `/flow save` does that).
+    if (e.reason !== 'clear' && e.reason !== 'resume') sound.over = true
     stopSound()
     // The defaults may have changed since the last look (another session's
     // save): what this one showed is kept for a resume.
