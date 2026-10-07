@@ -1,4 +1,4 @@
-// REVISION: flow-v125-tool-spark
+// REVISION: flow-v126-note-tips
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -51,6 +51,7 @@ import {
   type FlowConfig,
   type FlowLayout,
   nextTip,
+  noteTips,
   readTips,
   staleRows,
   type StaleRow,
@@ -76,7 +77,7 @@ import { frameSvg } from './svg'
 import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent } from './sound'
 
 
-const FLOW_REVISION = 'flow-v125-tool-spark'
+const FLOW_REVISION = 'flow-v126-note-tips'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -482,11 +483,16 @@ async function seedTips($: EngineInterface, usedBefore: boolean, settings: FlowC
   }
 }
 
-/** A chance for a one-time tip (see nextTip), the store keeping which have been given: the tip, if one's due. */
-async function takeTip($: EngineInterface, cfg: FlowConfig): Promise<string | undefined> {
+/**
+ * A chance for a one-time tip (see nextTip), the store keeping which have been
+ * given: the tip, if one's due. `noteOnly`: no chance (no prompt to toast
+ * over), but what's on is noted all the same (see noteTips): the sound turned
+ * on in /config in such a session, and off again later, still counts as tried.
+ */
+async function takeTip($: EngineInterface, cfg: FlowConfig, noteOnly = false): Promise<string | undefined> {
   try {
     const before = readTips(await $.store.get(TIPS))
-    const { tip, tips } = nextTip(before, cfg)
+    const { tip, tips } = noteOnly ? { tip: undefined, tips: noteTips(before, cfg) } : nextTip(before, cfg)
     if (JSON.stringify(tips) !== JSON.stringify(before)) await $.store.set(TIPS, tips)
     return tip
   } catch {
@@ -692,11 +698,9 @@ export const register: Register = (on, options) => {
       if (balloon instanceof Balloon) balloon.seed(altitude)
     }
 
-    // A one-time tip, the settings now in: the other scenes, or the sound.
-    if (e.isInteractive) {
-      const tip = await takeTip($, cfg)
-      if (tip) $.ui.toast(tip, { timeoutMs: 12_000 })
-    }
+    // A one-time tip, the settings now in: the other scenes, or the sound. With no prompt to toast over, what's on is noted.
+    const tip = await takeTip($, cfg, !e.isInteractive)
+    if (tip) $.ui.toast(tip, { timeoutMs: 12_000 })
 
     // The frame loop: its own pace, rescheduled each tick.
     let wasShown = driver.isShown()

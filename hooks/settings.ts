@@ -1,4 +1,4 @@
-// REVISION: flow-v123-first-tips
+// REVISION: flow-v125-note-tips
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -393,6 +393,14 @@ export function readTips(v: unknown): Tips {
   return t
 }
 
+/** What the settings show has been on (another scene, the sound), noted for the tips. */
+export function noteTips(tips: Tips, cfg: FlowConfig): Tips {
+  const t: Tips = { ...tips }
+  if (cfg.style !== 'fire') t.otherScene = true
+  if (cfg.sound === 'on') t.triedSound = true
+  return t
+}
+
 /**
  * The tips' first record, for someone with none (kept from a session's start,
  * before its own `/flow` can store anything). Someone new has been told
@@ -415,9 +423,7 @@ export function firstTips(usedBefore: boolean, settings: FlowConfig): Tips {
  * been on; then, three chances on, the sound, if it has never been on.
  */
 export function nextTip(tips: Tips, cfg: FlowConfig): { tip?: string; tips: Tips } {
-  const t: Tips = { ...tips }
-  if (cfg.style !== 'fire') t.otherScene = true
-  if (cfg.sound === 'on') t.triedSound = true
+  const t = noteTips(tips, cfg)
   if (!t.scenesTold) {
     t.scenesTold = true
     t.since = 0

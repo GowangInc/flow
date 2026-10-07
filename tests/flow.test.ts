@@ -1,4 +1,4 @@
-// REVISION: flow-v127-tool-spark
+// REVISION: flow-v128-note-tips
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -789,6 +789,17 @@ test("tips: someone new who picks a scene before any tip, then reloads, is still
   expect(seen.toasts ?? []).toEqual([])
   expect(await flow($, '')).not.toContain('flow:')
   expect(await flow($, '')).toContain('`/flow sound` turns it on')
+})
+
+test('tips: the sound on at a start with no prompt (set in /config) still counts as tried once it is off again', { options: { sound: 'on' } }, async ($, on) => {
+  mock.clock(on)
+  mock.store(on, { tips: {} }) // someone new, tips kept
+  engine(on)
+  await ($ as unknown as { session: { start: (a: object) => Promise<unknown> } }).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: false })
+  const said = [await flow($, 'sound off')]
+  for (let i = 0; i < 5; i++) said.push(await flow($, ''))
+  expect(said.filter(s => s.includes('steps through them'))).toHaveLength(1)
+  expect(said.filter(s => s.includes('`/flow sound` turns it on'))).toHaveLength(0)
 })
 
 test('tips: starting on the fire shows the scenes tip once, as a toast', async ($, on) => {
