@@ -1,4 +1,4 @@
-// REVISION: flow-v63-turn-waits
+// REVISION: flow-v64-tool-spark
 //
 // How busy the agent is: the work → scene mapping for `/flow auto`. Events
 // add "heat" (the metaphor from when the only scene was a fire), the heat
@@ -10,8 +10,9 @@
 // context is nearly full. Pure: no `$`, so it is unit-tested directly.
 //
 // Calibrated so the range reads as work, not chatter (see the calibration
-// tests): a streamed answer sits mid-range, edits and commands flare above
-// it, a few subagents push it high, and 10 takes parallel work plus edits.
+// tests): a streamed answer sits mid-range, reads and any other tool (an MCP
+// server's) spark a little, edits and commands flare above it, a few
+// subagents push it high, and 10 takes parallel work plus edits.
 
 import type { Tint } from './styles'
 
@@ -115,6 +116,11 @@ export class Activity {
   }
 
   read(isSubagent = false): void {
+    this.add(isSubagent ? 0.25 : 0.5)
+  }
+
+  /** Any other tool (an MCP server's, one with no word of its own here): work of a size unknown, a small spark as a read is. */
+  usedTool(isSubagent = false): void {
     this.add(isSubagent ? 0.25 : 0.5)
   }
 

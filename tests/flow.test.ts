@@ -1,4 +1,4 @@
-// REVISION: flow-v126-first-tips
+// REVISION: flow-v127-tool-spark
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -318,6 +318,52 @@ test('calibration: a swarm of reading subagents stays below 10; editing ones rea
     for (let a = 0; a < 4; a++) if (tickOf(t + a * 0.5, 3)) h.edited(30, true)
   })
   expect(editors.max).toBe(10)
+})
+
+test('calibration: any other tool (MCP) sparks as a read does: above a quiet turn, below an edit-test loop; a swarm stays below 10', async () => {
+  // (Over 25 s: a turn running longer climbs a level each 30 s on purpose.)
+  const turn = (spark: boolean) =>
+    simulate(25, (h, t) => {
+      const c = t % 3
+      if (c < 0.035) {
+        h.modelStep('high')
+        if (spark) h.usedTool()
+        h.toolsInFlight = 1
+      }
+      if (Math.abs(c - 1) < 0.035) h.toolsInFlight = 0
+    })
+  const loop = simulate(25, (h, t) => {
+    const c = t % 7
+    if (c < 0.035) {
+      h.modelStep('high')
+      h.edited(30)
+    }
+    if (Math.abs(c - 1) < 0.035) {
+      h.ranCommand()
+      h.toolsInFlight = 1
+    }
+    if (Math.abs(c - 6) < 0.035) h.toolsInFlight = 0
+  })
+  // A browser driven over MCP, a call a second, still sits below the edit-test loop.
+  const busy = simulate(25, (h, t) => {
+    if (tickOf(t, 1)) {
+      h.modelStep('high')
+      h.usedTool()
+    }
+  })
+  expect(turn(true).max).toBeGreaterThan(turn(false).max)
+  expect(turn(true).max).toBeLessThan(loop.max)
+  expect(busy.max).toBeLessThan(loop.max)
+  const swarm = simulate(25, (h, t) => {
+    h.runningAgents = 4
+    for (let a = 0; a < 4; a++) {
+      if (tickOf(t + a * 0.5, 2)) {
+        h.usedTool(true)
+        h.modelStep('low', true)
+      }
+    }
+  })
+  expect(swarm.at10).toBeLessThan(0.1)
 })
 
 test('calibration: a blocked tool keeps a low burn; a burst cools back to idle', async () => {
@@ -959,6 +1005,19 @@ test('a big write lifts the scene; a failed command shows smoke', async ($, on) 
   isError = true
   await $.tool.call({ tool: 'Bash', command: 'false' } as never)
   expect(await flow($)).toContain('after a failure')
+})
+
+test('an MCP tool (or any other) sparks the scene; a question put to the person does not', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  on('tool.call', () => ({ result: {} as never }))
+  await start($)
+  expect(await flow($)).toContain('now 1/10') // idle: a low glow
+  await $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  expect(await flow($)).toContain('now 1/10')
+  await $.tool.call({ tool: 'mcp__github__create_issue', title: 'x' } as never)
+  expect(await flow($)).toContain('now 2/10') // 1 + a read's spark
 })
 
 test('a precompute pass is not a compaction: no smoke', async ($, on) => {

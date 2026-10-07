@@ -1,4 +1,4 @@
-// REVISION: flow-v124-first-tips
+// REVISION: flow-v125-tool-spark
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -10,7 +10,8 @@
 //
 // Auto mode (the default) moves with the work Claude is doing: idle it sits
 // at a low glow (or dark); a turn lifts it by effort, streamed output keeps
-// it going, edits push it by lines written, commands spark, subagents add to
+// it going, edits push it by lines written, commands spark, reads and any
+// other tool (an MCP server's) spark a little, subagents add to
 // the scene and stoke it, a failed command or a compaction shows as smoke,
 // and a nearly-full context as blue (each scene shows these its own way).
 //
@@ -75,7 +76,7 @@ import { frameSvg } from './svg'
 import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent } from './sound'
 
 
-const FLOW_REVISION = 'flow-v124-first-tips'
+const FLOW_REVISION = 'flow-v125-tool-spark'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -945,6 +946,8 @@ export const register: Register = (on, options) => {
     else if (e.tool === 'Bash') activity.ranCommand(isSubagent)
     else if (e.tool === 'Agent') activity.spawnedAgent()
     else if (READ_TOOLS.has(e.tool)) activity.read(isSubagent)
+    // Any other (an MCP server's `mcp__…`, a tool added since) is work too; a question or a plan put to the person isn't.
+    else if (!PERSON_TOOLS.has(e.tool)) activity.usedTool(isSubagent)
 
     activity.toolsInFlight++
     const id = e.tool_use_id

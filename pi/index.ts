@@ -1,4 +1,4 @@
-// REVISION: flow-v121-fresh-defaults
+// REVISION: flow-v124-tool-spark
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -8,7 +8,7 @@
 //   agent_start / agent_end       a turn lifts it, then it settles to idle
 //   turn_start                    a model step; ctx.thinkingLevel sets the floor
 //   message_update (deltas)       streamed text/thinking keeps it going
-//   tool_call                     edits push it, commands spark, reads flicker
+//   tool_call                     edits push it, commands spark, reads and other tools flicker
 //   tool_result (isError, bash)   a failed command shows as smoke
 //   session_compact               so does a compaction
 //   ctx.getContextUsage()         a nearly-full context shows as blue
@@ -227,6 +227,7 @@ export default function flow(pi: PiApi) {
     if (lines !== undefined) activity.edited(lines)
     else if (COMMAND_TOOLS.has(e.toolName)) activity.ranCommand()
     else if (READ_TOOLS.has(e.toolName)) activity.read()
+    else activity.usedTool() // an extension's tool: work too
     activity.toolsInFlight++
   })
 
