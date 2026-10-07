@@ -11,12 +11,13 @@ Flow: ambient terminal scenes that move with a coding agent's work. One codebase
   types/             written by Claude Code on each load (gitignored): the mod API's types
 hooks/
   hooks.json         { "modules": ["./register.tsx"] }
-  register.tsx       Claude Code adapter: hooks, frame loop, /flow, settings write-through
+  register.tsx       Claude Code adapter: hooks, frame loop, /flow, each session's settings in the store
   svg.ts             Claude desktop: a frame's cells as a PNG inside one Svg (pure, unit-tested)
   sound.ts           soundscapes: each scene's layers of clips and its events' clips, levels, small events synthesized (pure)
   sound-files.ts     every clip in sounds/ and each mood's bed gain (written by scripts/make-sounds.ts)
   scene.ts           SceneDriver: shared by both adapters (scene per style, level, dials, pace)
   settings.ts        FlowConfig, the /flow grammar, every reply's wording (pure)
+  sessions.ts        each session's own settings over the defaults: records, moving to another session, pruning (pure)
   activity.ts        how busy the agent is: work → level and tint (pure, unit-tested)
   styles.ts          SCENES (the one list of scenes), the Scene interface and Tint, makeScene; the fire (Ember)
   scene-def.ts       SceneDef / defineScene: what a scene file exports so it can be listed
@@ -82,10 +83,15 @@ The engine validates the module before it runs (`claude plugin validate .`):
 
 ## Settings
 
-- The settings are `userConfig` rows in `/config`. Claude Code reloads the module when one changes, which would restart the scene.
-- So `/flow` applies its change at once and keeps it in `$.store` (`overrides`), not `/config`. The store is shared by every session: writes merge into it, and only fields still holding the value written are cleared.
-- The overrides are written through to `/config` at `session.end`. A change made in `/config` itself wins over a pending one.
-- pi keeps its settings in `~/.pi/agent/flow.json`.
+- Settings are per session. The `userConfig` rows in `/config` are the defaults every session starts from; Claude Code reloads the module when one changes, which would restart the scene.
+- So `/flow` applies its change at once to the session it runs in and keeps the fields it set (the session's own, `hooks/sessions.ts`) in `$.store` under `session:<id>` (`$.session.id()`, the transcript's id). One key per session: two sessions never write the same key. `/flow` never writes `/config`, except `/flow save`.
+- At `session.start` (a new process, a resume, any reload of the module) the session shows its own settings over the defaults; a new session has none. A resumed session keeps its id (`claude --resume`, `--continue`, the desktop app reopening it; only `--fork-session` gives a new one), so its settings come back. Terminal and desktop views of one session are one load, sharing all of it.
+- `/clear`, and a resume from inside a session, move the process on to another id with no `session.start`: `session.end` (reason `clear` or `resume`) has the id read every second for a while; it's also read every 5 s and before each `/flow`. After a `/clear` the settings carry on to the new id; a resumed session shows its own, or the defaults if it kept none (`ownAfterSwitch`).
+- A record is marked used (`at`) when it's written and when its session starts; the 100 used most recently are kept, none unused for 60 days (`staleSessions`, pruned at each `session.start`).
+- `/flow save` writes the session's settings that differ from the defaults to `/config`, then drops them from its own (written first: a reload the write brings finds them in one or the other); `/flow reset` drops its own. A change made in `/config` itself is a default and applies to the session it's made in at once, dropping the session's own value for that row before the write (the write's reload reads the store).
+- Before this, `/flow` kept its changes in one `overrides` key shared by every session and wrote them through to `/config` at `session.end`. Any still there are written through once at `session.start` (`migrateOverrides`), the defaults now; nothing is written at `session.end` any more.
+- The balloon's altitude is in `$.state` (the session's, surviving a reload); the one-time tips stay per user, in `$.store` under `tips`.
+- pi keeps a session's own settings in the session: a `flow` custom entry (`pi.appendEntry`), read back from `getBranch()` at `session_start` and `session_tree`, so a resume or a fork brings them back. `~/.pi/agent/flow.json` holds the defaults, written by `/flow save`. A pi without session entries keeps one set for every session in flow.json, as before.
 - The band and the spine's pane show only while the scene does (`SceneDriver.isShown()`): `/flow off`, or auto's dark idle between turns, gives their rows back. The pane is closed by the plugin then (so the layout stays spine; only you closing it means you'd rather have the band) and reopens with the scene.
 - `/flow` is the only command. Don't add aliases.
 - One-time tips (`nextTip` in `settings.ts`, kept in `$.store` under `tips`): at the first chance (a `/flow`, or an interactive session starting, as a toast) while it's still the fire and no other scene has been on, the other scenes; three chances later, if the sound has never been on, the sound.

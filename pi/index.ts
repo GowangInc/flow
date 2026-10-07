@@ -1,4 +1,4 @@
-// REVISION: flow-v62-drain
+// REVISION: flow-v120-per-session
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -14,10 +14,15 @@
 //   ctx.getContextUsage()         a nearly-full context shows as blue
 //
 // `/flow` takes the same arguments
-// as in Claude Code, day and night following the local clock unless pinned;
-// settings persist in ~/.pi/agent/flow.json (read from the old
-// vista.json or ascii-fire.json until that exists). pi has no built-in subagents, so
-// they never add to the scene here, and no side panes, so there is no spine.
+// as in Claude Code, day and night following the local clock unless pinned.
+// As there, each session keeps its own settings: `/flow` changes the session
+// it runs in, kept in the session itself (a `flow` entry, never sent to the
+// model), so resuming or forking it brings them back. ~/.pi/agent/flow.json
+// holds the defaults new sessions start with (read from the old vista.json
+// or ascii-fire.json until that exists); `/flow save` writes it. An older pi
+// without session entries keeps one set for every session, in that file, as
+// before. pi has no built-in subagents, so they never add to the scene here,
+// and no side panes, so there is no spine.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -25,18 +30,22 @@ import { dirname, join } from 'node:path'
 
 import { Activity } from '../hooks/activity'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
+import { differences, type Own, storedOwn, withOwn } from '../hooks/sessions'
 import {
   changedText,
   changesFor,
   helpText,
+  ownHint,
   parseFlowArgs,
   readConfig,
+  resetText,
+  savedText,
   statusText,
   storedValue,
   type FlowConfig,
 } from '../hooks/settings'
 import { gridToAnsi } from './ansi'
-import { COMMAND_TOOLS, effortOf, piLinesWritten, READ_TOOLS } from './mapping'
+import { COMMAND_TOOLS, effortOf, FLOW_ENTRY, ownInSession, piLinesWritten, READ_TOOLS } from './mapping'
 import type { PiApi, PiComponent, PiContext, PiTui } from './types'
 
 const KEY = 'flow'
@@ -84,6 +93,22 @@ export default function flow(pi: PiApi) {
   const activity = new Activity()
   const driver = new SceneDriver(readConfig(undefined), activity)
   const cfg = driver.cfg
+  /** What new sessions start with (flow.json), and this session's own over it. */
+  let defaults = readConfig(undefined)
+  let own: Own = {}
+
+  /** Whether this pi keeps entries in a session: else every session shares flow.json, as before. */
+  const perSession = (ctx: PiContext) => typeof pi.appendEntry === 'function' && ctx.sessionManager !== undefined
+
+  /** Read the session's own settings and show them over the defaults. */
+  const readSession = (ctx: PiContext) => {
+    own = perSession(ctx) ? ownInSession(ctx.sessionManager?.getBranch() ?? []) : {}
+    driver.apply(withOwn(defaults, own))
+    width = 0 // redraw at once in the new look
+  }
+
+  /** Keep the session's own settings in the session (its latest entry wins). */
+  const keepOwn = () => pi.appendEntry?.(FLOW_ENTRY, { own: storedOwn(own) })
 
   let ctxRef: PiContext | undefined
   let tui: PiTui | undefined
@@ -166,12 +191,21 @@ export default function flow(pi: PiApi) {
   pi.on('session_start', async (_e, ctx) => {
     if (ctx.mode !== 'tui' || !ctx.hasUI) return
     ctxRef = ctx
-    driver.apply(await loadSettings())
+    // A new session starts on the defaults; a resumed, forked or reloaded one on its own over them.
+    defaults = await loadSettings()
+    readSession(ctx)
     readClock()
     stop()
     isMounted = false
     sync(ctx)
     frame(FRAME_MS)
+  })
+
+  // `/tree` to another branch: the settings that branch kept.
+  pi.on('session_tree', (_e, ctx) => {
+    if (!ctxRef || !perSession(ctx)) return
+    readSession(ctx)
+    sync(ctx)
   })
 
   pi.on('session_shutdown', (_e, ctx) => {
@@ -213,7 +247,39 @@ export default function flow(pi: PiApi) {
     const cmd = parseFlowArgs(args)
     readClock()
     if (cmd.kind === 'show') {
-      ctx.ui.notify(say(statusText(cfg, driver.level(), driver.tint(), driver.clock)))
+      ctx.ui.notify(say(statusText(cfg, driver.level(), driver.tint(), driver.clock, defaults)))
+      return
+    }
+    if (cmd.kind === 'save') {
+      // The session's settings become flow.json's, the default new sessions start with.
+      const before = { ...defaults }
+      const changes = differences(cfg, defaults)
+      if (Object.keys(changes).length) {
+        try {
+          await saveSettings(changes)
+        } catch {
+          ctx.ui.notify(say(`not saved: couldn't write ${SETTINGS}`), 'warning')
+          return
+        }
+        defaults = { ...defaults, ...changes }
+      }
+      if (Object.keys(own).length && perSession(ctx)) {
+        own = {}
+        keepOwn()
+      }
+      ctx.ui.notify(say(savedText(cfg, before, Object.keys(changes).length > 0)))
+      return
+    }
+    if (cmd.kind === 'reset') {
+      const before = { ...cfg }
+      if (Object.keys(own).length && perSession(ctx)) {
+        own = {}
+        keepOwn()
+      }
+      driver.apply(defaults)
+      width = 0
+      sync(ctx)
+      ctx.ui.notify(say(resetText(before, defaults)))
       return
     }
     if (cmd.kind === 'help') {
@@ -229,20 +295,30 @@ export default function flow(pi: PiApi) {
       return
     }
     const changes = changesFor(cmd, cfg) ?? {}
+    const before = { ...cfg }
     driver.apply(changes)
     width = 0 // redraw at once in the new look
     sync(ctx)
     let note = ''
-    try {
-      await saveSettings(changes)
-    } catch {
-      note = '  (not saved)'
+    if (perSession(ctx)) {
+      // This session's alone, kept in the session.
+      own = { ...own, ...changes }
+      keepOwn()
+      note = ownHint(before, cfg, defaults)
+    } else {
+      // (No session entries in this pi: one set of settings for every session.)
+      try {
+        await saveSettings(changes)
+        defaults = { ...defaults, ...changes }
+      } catch {
+        note = '  (not saved)'
+      }
     }
     ctx.ui.notify(say(`${changedText(cmd, cfg, "pi's", driver.clock)}${note}`))
   }
   pi.registerCommand('flow', {
     description:
-      'Ambient scenes above the editor: /flow [<scene> | next | day | night | clock | auto | 1-10 | off | help]',
+      'Ambient scenes above the editor: /flow [<scene> | next | day | night | clock | auto | 1-10 | off | save | reset | help]',
     handler,
   })
 }

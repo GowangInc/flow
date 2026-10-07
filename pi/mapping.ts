@@ -1,10 +1,25 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v120-per-session
 //
-// pi's events in the heat model's terms. Pure (no Node imports), so the
-// shared test suite covers it.
+// pi's events in the heat model's terms, and its session's entries in the
+// settings'. Pure (no Node imports), so the shared test suite covers it.
 
 import { countLines, type Effort } from '../hooks/activity'
-import type { PiThinkingLevel } from './types'
+import { readOwn, type Own } from '../hooks/sessions'
+import type { PiSessionEntry, PiThinkingLevel } from './types'
+
+/** The session entry that keeps a session's own settings, `{ own }`: the latest on the branch counts. */
+export const FLOW_ENTRY = 'flow'
+
+/** A session's own settings, from its branch's entries (none kept: it follows the defaults). */
+export function ownInSession(entries: readonly PiSessionEntry[]): Own {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!
+    if (entry.type === 'custom' && entry.customType === FLOW_ENTRY) {
+      return readOwn((entry.data as { own?: unknown } | undefined)?.own)
+    }
+  }
+  return {}
+}
 
 export const COMMAND_TOOLS = new Set(['bash', 'powershell'])
 export const READ_TOOLS = new Set(['read', 'grep', 'find', 'ls'])

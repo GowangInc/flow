@@ -87,7 +87,9 @@ A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes se
 
 ## The command
 
-`/flow` changes things at once. The settings are also rows in `/config` (*Scene mode*, *Scene*, *Scene while idle*, *Manual level*, *Scene layout*, *Day or night*).
+`/flow` changes things at once, in the session you run it in. Each session keeps its own scene and settings, so two sessions side by side can show different scenes, and resuming one (`claude --resume`, `claude --continue`, or opening it again in the Claude desktop app) brings its settings back. A `/clear` keeps the scene you had.
+
+A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Scene*, *Scene while idle*, *Manual level*, *Scene layout*, *Day or night*, *Sound*). `/flow save` makes the current session's settings your default, and `/flow reset` puts a session back on it. Changing a row in `/config` changes the default and the session you're in. `/flow` on its own says when the session differs from your default, and how.
 
 | Command | Effect |
 |---|---|
@@ -102,6 +104,8 @@ A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes se
 | `/flow idle glow` / `dark` | in auto mode while idle: a low glow (the default), or nothing (the band gives its rows back) |
 | `/flow sound` | toggle a soundscape for the scene, swelling with the work (macOS; off by default); `/flow sound on` / `off` to set it |
 | `/flow band` / `spine` | a 5-row band above the prompt (the default; also `horizontal`, `bar` or `flat`), or a tall pane docked beside the transcript (also `portrait`, `vertical` or `side`) |
+| `/flow save` | make this session's settings your default, the one new sessions start with (it writes them to `/config`) |
+| `/flow reset` | put this session back on your default |
 | `/flow help` | list all of this |
 
 
@@ -111,11 +115,11 @@ A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes se
 
 The background is long takes that blend one into the next at random moments, so nothing comes round on a beat, and a fresh one crossfades in whenever the level or the scene changes (a rocket on the pad, climbing, in orbit, coming home). On top of it you hear what happens on screen, as it happens: bubbles bursting, rocks blowing up on the shield, sparks, a wave breaking, each ski turn, the hammer, and the rockets' ignition, staging, the booster's sonic boom, the catch, parachutes and splashdown. Every scene follows the same loudness from level 1 (quiet) to 10.
 
-It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, so it's macOS only; elsewhere the setting does nothing. Several sessions open at once each play their own.
+It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another; several sessions with it on each play their own.
 
 ## Turning it off
 
-Run `/flow off`, or `/flow idle dark` to stay in auto mode but show nothing while idle. You can also disable the plugin. Flow draws in the terminal and in the Claude desktop app; not in VS Code or on mobile.
+Run `/flow off`, or `/flow idle dark` to stay in auto mode but show nothing while idle. Either applies to the session you run it in; follow it with `/flow save` to make it the default for new sessions too. You can also disable the plugin. Flow draws in the terminal and in the Claude desktop app; not in VS Code or on mobile.
 
 ## pi
 
@@ -131,7 +135,7 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 | `session_compact` | so does a compaction |
 | `ctx.getContextUsage()` | a nearly-full context shows as blue |
 
-Settings persist in `~/.pi/agent/flow.json`. To try it without installing: `pi --extension ./pi/index.ts`.
+As in Claude Code, each session keeps its own settings, kept in the session itself (an entry the model never sees), so resuming or forking it brings them back. `~/.pi/agent/flow.json` holds the defaults new sessions start with; `/flow save` writes it. To try it without installing: `pi --extension ./pi/index.ts`.
 
 ## Cost
 

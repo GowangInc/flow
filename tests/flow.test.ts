@@ -1,18 +1,19 @@
-// REVISION: flow-v110-long-beds
+// REVISION: flow-v120-per-session
 
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten } from '../hooks/activity'
-import { nextTip, readTips, changedText, changesFor, helpText, isNightAt, parseFlowArgs, readConfig, statusText } from '../hooks/settings'
+import { nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, statusText } from '../hooks/settings'
+import { differences, ownAfterSwitch, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
-import { effortOf, piLinesWritten } from '../pi/mapping'
+import { effortOf, ownInSession, piLinesWritten } from '../pi/mapping'
 import { Balloon, skyColor } from '../hooks/balloon'
 import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
 import { makeScene, nextStyle, SCENES, STYLES, styleNamed } from '../hooks/styles'
-import { keepOverrides, writeThrough } from '../hooks/register'
+import { migrateOverrides } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
@@ -41,13 +42,25 @@ function decode(cells: string): Uint32Array {
   return new Uint32Array(bytes.buffer)
 }
 
+type Captured = {
+  blits: string[]
+  config: [string, unknown][]
+  invalidates?: number
+  plays?: string[]
+  toasts?: string[]
+  /** The session's id, as `$.session.id()` answers it (change it to move the process to another session). */
+  session?: string
+}
+
 /** Stand for the engine beneath the plugin: its band, session start, calls. */
 function engine(
   on: On,
-  captured: { blits: string[]; config: [string, unknown][]; invalidates?: number; plays?: string[]; toasts?: string[] } = { blits: [], config: [] },
+  captured: Captured = { blits: [], config: [] },
   /** Clips the player refuses as full (as Claude Code does past four at once). */
   refuse?: (asset: string) => boolean,
 ) {
+  on('session.id', () => ({ value: (captured.session ??= 'session-a') }))
+  on('session.end', (_, e) => ({ sessionId: e.sessionId }))
   on('audio.play', (_, e) => {
     const clip = e.clip as { base64?: string; asset?: string }
     ;(captured.plays ??= []).push(`${e.shouldLoop ? 'loop' : 'once'}:${(clip.base64 ?? '').length}:${clip.asset ?? (clip.base64 ?? '').slice(-24)}`)
@@ -78,6 +91,19 @@ function engine(
     return { value: e.value }
   })
   return captured
+}
+
+/**
+ * `$.store` over a Map the test can look into, values kept as JSON keeps them
+ * (as mock.store does): the store every session of the plugin shares.
+ */
+function memoryStore(on: On, entries: Readonly<Record<string, unknown>> = {}): Map<string, unknown> {
+  const store = new Map<string, unknown>(Object.entries(entries).map(([k, v]) => [k, structuredClone(v)]))
+  on('store.get', (_, e) => ({ value: structuredClone(store.get(e.key)) }))
+  on('store.set', (_, e) => (store.set(e.key, JSON.parse(JSON.stringify(e.value))), { value: undefined }))
+  on('store.delete', (_, e) => (store.delete(e.key), { value: undefined }))
+  on('store.keys', () => ({ value: [...store.keys()] }))
+  return store
 }
 
 type TestDollar = { session: { start: (a: { cwd: string; surface: 'terminal'; isInteractive: boolean }) => Promise<unknown> } }
@@ -787,7 +813,7 @@ test('/flow applies at once without a /config write (no reload), and its changes
   mock.store(on)
   const seen = engine(on)
   await start($)
-  expect(await flow($, 'next')).toBe('warp · `/flow next` for another')
+  expect((await flow($, 'next')).split('\n')[0]).toBe('warp · `/flow next` for another')
   // (A one-time tip may follow the reply, after a blank line.)
   expect((await flow($, '5')).split('\n\n')[0]).toBe('holding 5/10 — `/flow auto` to follow the work again')
   expect((await flow($, '8')).split('\n\n')[0]).toBe('holding 8/10 — `/flow auto` to follow the work again')
@@ -1131,8 +1157,11 @@ test("a pending scene under an old name (colony) is written through as its new o
       set: async ({ key, value }: { key: string; value: unknown }) => ((config[key] = value), { value }),
     },
   } as never
-  await writeThrough(session)
+  expect(await migrateOverrides(session)).toEqual({ style: 'avalon' })
   expect(config['flow.style']).toBe('avalon')
+  expect(store.has('overrides')).toBe(false)
+  // A session's own settings read old names the same way.
+  expect(readOwn({ style: 'colony', idle: 'dark', level: 42, junk: 1 })).toEqual({ style: 'avalon', idle: 0 })
 })
 
 test("a desktop view of the band doesn't stop the terminal's blits", async ($, on) => {
@@ -1435,38 +1464,212 @@ test('/flow ignores words that only exist on every object (constructor, __proto_
   }
 })
 
-test("a session ending keeps another session's newer change pending, not dropped", async () => {
-  // One store shared by both sessions; B runs `/flow ski` while A is writing its `surf` to /config.
-  const store = new Map<string, unknown>()
-  const config: Record<string, unknown> = {}
-  const tick = () => new Promise(r => setTimeout(r, 0))
-  let midSave: (() => Promise<unknown>) | undefined
-  const session = () =>
-    ({
-      store: {
-        get: async (k: string) => (await tick(), structuredClone(store.get(k))),
-        set: async (k: string, v: unknown) => (await tick(), store.set(k, structuredClone(v))),
-        delete: async (k: string) => (await tick(), store.delete(k)),
-      },
-      config: {
-        set: async ({ key, value }: { key: string; value: unknown }) => {
-          const go = midSave
-          midSave = undefined
-          if (go) await go()
-          config[key] = value
-          return { value }
-        },
-      },
-    }) as never
-  const a = session()
-  const b = session()
-  await keepOverrides(a, { style: 'surf' })
-  midSave = () => keepOverrides(b, { style: 'ski' })
-  await writeThrough(a)
-  expect(config['flow.style']).toBe('surf')
-  await writeThrough(b)
-  expect(config['flow.style']).toBe('ski')
+// ── Per-session settings ─────────────────────────────────────────────────
+
+type EndInput = { reason: string; sessionId: string; resume: { id: string } }
+/** End the session as the engine does (a /clear, a resume, an exit), the process going on. */
+async function endSession($: unknown, reason: string, id: string) {
+  await ($ as { session: { end: (e: EndInput) => Promise<unknown> } }).session.end({ reason, sessionId: id, resume: { id } })
+}
+
+test('sessions: /flow changes only the session it runs in; each resumes with its own, a new one starts on the defaults', { options: { style: 'surf' } }, async ($, on) => {
+  mock.clock(on)
+  const store = memoryStore(on)
+  const seen = engine(on)
+  seen.session = 'a'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/^surf, auto/)
+  const picked = await flow($, 'ski night')
+  expect(picked.split('\n')[0]).toBe('ski, night · `/flow next` for another')
+  expect(picked).toContain('just this session · `/flow save` makes it your default')
+  expect(store.get(sessionKey('a'))).toMatchObject({ own: { style: 'ski', time: 'night' } })
+  expect(store.has('overrides')).toBe(false) // nothing shared...
+  expect(seen.config).toEqual([]) // ...and /config, the defaults, untouched
+  // Session B (another process on the same store) starts on the defaults, and picks its own.
+  seen.session = 'b'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/^surf, auto/)
+  await flow($, 'bubbles')
+  await flow($, 'sound on')
+  // A resumed: its own back, and the status says which are its own.
+  seen.session = 'a'
+  await start($)
+  const a = await flow($)
+  expect(a.split('\n')[0]).toMatch(/^ski, auto, now \S+ \(idle glow\), night$/)
+  expect(a).toContain('just this session (your default: surf, day and night by the clock) · `/flow save` makes this the default · `/flow reset` goes back')
+  // B resumed: its own.
+  seen.session = 'b'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/^bubbles, .*sound on$/)
+  // A brand new session: the defaults, with nothing of its own.
+  seen.session = 'c'
+  await start($)
+  const c = await flow($)
+  expect(c.split('\n')[0]).toMatch(/^surf, auto/)
+  expect(c).not.toContain('just this session')
+  expect(store.has(sessionKey('c'))).toBe(false)
+  expect(seen.config).toEqual([])
+})
+
+test('sessions: a /clear carries the settings on to the new conversation; a resume from inside shows the resumed one\'s own, or the defaults', async ($, on) => {
+  const clock = mock.clock(on)
+  const store = memoryStore(on, { [sessionKey('b')]: storedRecord({ style: 'surf', layout: 'band' }, 0) })
+  const seen = engine(on)
+  seen.session = 'a'
+  await start($)
+  await flow($, 'ski')
+  // /clear: the conversation ends and the process goes on under a new id, with no session.start.
+  await endSession($, 'clear', 'a')
+  seen.session = 'c'
+  await clock.advance(1000)
+  expect(store.get(sessionKey('c'))).toMatchObject({ own: { style: 'ski' } }) // kept under the new id at once
+  expect((await flow($)).split('\n')[0]).toMatch(/^ski/)
+  // /resume b from inside: b's own, picked up by the next read of the id (no /flow needed).
+  await endSession($, 'resume', 'c')
+  seen.session = 'b'
+  await clock.advance(1000)
+  expect(store.get(sessionKey('b'))).toMatchObject({ own: { style: 'surf' }, at: clock.now() }) // marked used
+  expect((await flow($)).split('\n')[0]).toMatch(/^surf/)
+  // /resume d, which kept nothing: the defaults, as it would show started afresh.
+  await endSession($, 'resume', 'b')
+  seen.session = 'd'
+  expect((await flow($)).split('\n')[0]).toMatch(/^fire/)
+  expect(store.has(sessionKey('d'))).toBe(false)
+  // c, reloaded (a /config change, an update): still its own.
+  seen.session = 'c'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/^ski/)
+})
+
+test('sessions: /flow save makes this session\'s settings the default (/config); /flow reset goes back to it', async ($, on) => {
+  mock.clock(on)
+  const store = memoryStore(on)
+  const seen = engine(on)
+  await start($)
+  expect((await flow($, 'save')).split('\n\n')[0]).toBe('already your default: new sessions start this way')
+  await flow($, 'surf')
+  await flow($, '5')
+  expect(store.get(sessionKey('session-a'))).toMatchObject({ own: { style: 'surf', mode: 'manual', level: 5 } })
+  expect((await flow($, 'save')).split('\n\n')[0]).toBe('saved as your default: new sessions start with surf, holding 5/10')
+  expect(seen.config).toContainEqual(['flow.style', 'surf'])
+  expect(seen.config).toContainEqual(['flow.mode', 'manual'])
+  expect(seen.config).toContainEqual(['flow.level', 5])
+  expect(seen.config).toHaveLength(3) // only what differed
+  expect(store.has(sessionKey('session-a'))).toBe(false) // nothing of its own now: it is the default
+  expect(await flow($)).not.toContain('just this session')
+  // Something else, then back to the default.
+  await flow($, 'ski')
+  expect((await flow($)).split('\n')[1]).toContain('your default: surf')
+  expect((await flow($, 'reset')).split('\n\n')[0]).toBe('back to your default: surf')
+  expect((await flow($)).split('\n')[0]).toMatch(/^surf, holding 5\/10/)
+  expect(store.has(sessionKey('session-a'))).toBe(false)
+  expect((await flow($, 'reset')).split('\n\n')[0]).toBe('already on your default')
+  // A new session starts on what was saved.
+  seen.session = 'session-b'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/^surf, holding 5\/10/)
+})
+
+test('sessions: a /config change made in the session is the default, and that row is no longer the session\'s own', async ($, on) => {
+  mock.clock(on)
+  const store = memoryStore(on)
+  engine(on)
+  await start($)
+  await flow($, 'surf')
+  await flow($, 'sound on')
+  const set = $.config.set as unknown as (e: object) => Promise<unknown>
+  await set({ key: 'flow.style', value: 'ski', previous: 'fire', provider: { plugin: 'flow', tier: 'user' }, origin: { kind: 'composer' } })
+  expect(store.get(sessionKey('session-a'))).toEqual({ own: { sound: 'on' }, at: 0 })
+  const status = await flow($)
+  expect(status.split('\n')[0]).toMatch(/^ski, .*sound on$/)
+  expect(status).toContain('your default: sound off')
+})
+
+test('sessions: /flow changes pending from before (shared by every session) are written to /config once and show; nothing is written at the end', async ($, on) => {
+  mock.clock(on)
+  const store = memoryStore(on, { overrides: { style: 'ski', idle: 'dark' } })
+  const seen = engine(on)
+  await start($)
+  expect(seen.config).toContainEqual(['flow.style', 'ski'])
+  expect(seen.config).toContainEqual(['flow.idle', 'dark'])
   expect(store.has('overrides')).toBe(false)
+  const status = await flow($)
+  expect(status.split('\n')[0]).toMatch(/^ski, auto, now \S+ \(idle dark\)/)
+  expect(status).not.toContain('just this session') // the defaults now
+  await flow($, 'surf')
+  const writes = seen.config.length
+  await endSession($, 'prompt_input_exit', 'session-a')
+  expect(seen.config).toHaveLength(writes)
+  expect(store.get(sessionKey('session-a'))).toMatchObject({ own: { style: 'surf' } })
+})
+
+test('sessions: only the most recently used are kept, none unused past two months, and always this one', async ($, on) => {
+  const day = 24 * 60 * 60 * 1000
+  const now = 400 * day
+  const clock = mock.clock(on, { now })
+  const entries: Record<string, unknown> = { tips: { scenesTold: true } }
+  for (let i = 0; i < SESSIONS_KEPT + 20; i++) entries[sessionKey(`s${i}`)] = storedRecord({ style: 'surf' }, now - i * 1000)
+  entries[sessionKey('old')] = storedRecord({ style: 'ski' }, now - 61 * day)
+  entries[sessionKey('me')] = storedRecord({ style: 'bubbles' }, now - 300 * day) // resumed after a long while
+  const store = memoryStore(on, entries)
+  const seen = engine(on)
+  seen.session = 'me'
+  await start($)
+  await clock.settle()
+  const kept = [...store.keys()].filter(k => k.startsWith('session:'))
+  expect(kept).toHaveLength(SESSIONS_KEPT)
+  expect(kept).toContain(sessionKey('me'))
+  expect(kept).toContain(sessionKey('s0'))
+  expect(kept).not.toContain(sessionKey('old'))
+  expect(kept).not.toContain(sessionKey(`s${SESSIONS_KEPT + 19}`))
+  expect(store.has('tips')).toBe(true)
+  expect((await flow($)).split('\n')[0]).toMatch(/^bubbles/)
+})
+
+test('sessions: the pure parts (differences, a move to another session, pruning, the words)', () => {
+  const defaults = readConfig({ style: 'surf' })
+  const cfg = withOwn(defaults, { style: 'ski', level: 3 })
+  expect(cfg).toEqual({ ...defaults, style: 'ski', level: 3 })
+  expect(differences(cfg, defaults)).toEqual({ style: 'ski', level: 3 })
+  // A held level in auto mode doesn't show, so it isn't named as the session's own.
+  expect(statusText(withOwn(defaults, { level: 3 }), 2, 'normal', { hour: 12, minute: 0 }, defaults)).not.toContain('just this session')
+  expect(statusText(cfg, 2, 'normal', { hour: 12, minute: 0 }, defaults)).toContain('(your default: surf)')
+  // Only the change that first sets the session apart says so.
+  expect(ownHint(defaults, cfg, defaults)).toContain('/flow save')
+  expect(ownHint(cfg, { ...cfg, style: 'fire' }, defaults)).toBe('')
+  expect(ownHint(cfg, defaults, defaults)).toBe('')
+  expect(savedText(cfg, defaults, true, ['level'])).toBe('saved as your default: new sessions start with ski  (not saved: /config refused level)')
+  expect(savedText(cfg, defaults, false, ['style'])).toBe('not saved: /config refused style')
+  expect(resetText({ ...defaults, sound: 'on', layout: 'spine' }, defaults)).toBe('back to your default: band, sound off')
+  // Moving to another session: its own; a resumed one with none, the defaults; else (a /clear) carried on.
+  const record = { own: { style: 'bubbles' as const }, at: 5 }
+  expect(ownAfterSwitch(record, { style: 'ski' }, 'clear')).toEqual({ own: { style: 'bubbles' }, carried: false })
+  expect(ownAfterSwitch(undefined, { style: 'ski' }, 'resume')).toEqual({ own: {}, carried: false })
+  expect(ownAfterSwitch(undefined, { style: 'ski' }, 'clear')).toEqual({ own: { style: 'ski' }, carried: true })
+  expect(ownAfterSwitch(undefined, {}, undefined)).toEqual({ own: {}, carried: false })
+  // Stored records read back; junk is no record's own.
+  expect(readRecord(storedRecord({ idle: 0, style: 'avalon' }, 7))).toEqual({ own: { idle: 0, style: 'avalon' }, at: 7 })
+  expect(readRecord({ own: 'x', at: 'y' })).toEqual({ own: {}, at: 0 })
+  expect(readRecord(null)).toBeUndefined()
+  // Pruning: past the kept count by last use, or too old; never the one asked to keep.
+  const recs = Array.from({ length: SESSIONS_KEPT + 2 }, (_, i) => ({ key: `k${i}`, at: 1000 - i }))
+  expect(staleSessions(recs, 1000)).toEqual([`k${SESSIONS_KEPT}`, `k${SESSIONS_KEPT + 1}`])
+  expect(staleSessions(recs, 1000, `k${SESSIONS_KEPT + 1}`)).toEqual([`k${SESSIONS_KEPT - 1}`, `k${SESSIONS_KEPT}`])
+  expect(staleSessions([{ key: 'a', at: 0 }, { key: 'b', at: SESSION_KEPT_MS }], SESSION_KEPT_MS + 1)).toEqual(['a'])
+  // The grammar.
+  expect(parseFlowArgs('save')).toEqual({ kind: 'save' })
+  expect(parseFlowArgs('reset')).toEqual({ kind: 'reset' })
+  expect(parseFlowArgs('default').kind).toBe('error')
+  expect(changesFor(parseFlowArgs('save'), cfg)).toBeUndefined()
+  expect(helpText()).toContain('/flow save')
+  expect(helpText("pi's", false)).toContain('/flow reset')
+})
+
+test('pi: a session\'s own settings are its latest flow entry on the branch', () => {
+  const entry = (id: string, data: unknown, customType = 'flow') => ({ type: 'custom', id, customType, data })
+  expect(ownInSession([])).toEqual({})
+  expect(ownInSession([entry('1', { own: { style: 'surf' } }), { type: 'message', id: '2' }, entry('3', { own: { style: 'ski', sound: 'on' } }), entry('4', { own: {} }, 'other')])).toEqual({ style: 'ski', sound: 'on' })
+  expect(ownInSession([entry('1', { own: { style: 'surf' } }), entry('2', { own: {} })])).toEqual({})
 })
 
 test('ski: the skier never drops out of its own cells, even with fast scenery behind it at night', async () => {
