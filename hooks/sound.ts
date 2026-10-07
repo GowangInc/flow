@@ -1,4 +1,4 @@
-// REVISION: flow-v119-drain
+// REVISION: flow-v123-train-faster
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -85,6 +85,7 @@ export type SoundKind =
   | 'crash' // a wave breaking
   | 'lap' // a small wave on a calm sea
   | 'swish' // a ski turn
+  | 'horn' // a train's horn: pulling away, or before a level crossing
 export type SoundEvent = { kind: SoundKind; v: number }
 
 /** What a scene is doing now, for its bed: each 0..1 (a scene reports the ones it has). */
@@ -251,6 +252,7 @@ const MASTER: Record<string, (s: number) => number> = {
   surf: s => 0.25 + 0.6 * s,
   ski: () => 1.4,
   bubbles: s => 1 - 1.1 * Math.max(0, s - 0.5),
+  train: s => 0.2 + 0.38 * Math.sqrt(s),
 }
 
 /** A scene's master volume at a level (0..10). */
@@ -318,6 +320,17 @@ export const LAYERS: Record<string, Layer[]> = {
   ],
   falcon: rocketLayers('rocket/roar'),
   starship: rocketLayers('starship/roar'),
+  train: [
+    // The wheels' roll and the wind past it both rising with speed (0 standing); the diesel idling while it
+    // waits, working as it runs, flat out at the top (three pitches, crossfading); the open air while it
+    // stands (the horn is an event).
+    { clip: 'train/rumble', variants: BED_TAKES, gain: (s, m) => ((m.amb.wind ?? s) > 0 ? 0.25 + 0.75 * (m.amb.wind ?? s) : 0) },
+    { clip: 'train/rush', variants: BED_TAKES, gain: (s, m) => 0.55 * (m.amb.wind ?? s) ** 2 },
+    { clip: 'train/air', variants: BED_TAKES, gain: (s, m) => ((m.amb.wind ?? s) > 0 ? 0.05 : 0.18) },
+    { clip: 'train/drone1', variants: BED_TAKES, gain: (s, m) => 0.6 * Math.max(0, 1 - (m.amb.wind ?? s) / 0.3) },
+    { clip: 'train/drone2', variants: BED_TAKES, gain: (s, m) => 0.35 * Math.max(0, 1 - Math.abs((m.amb.wind ?? s) - 0.42) / 0.32) },
+    { clip: 'train/drone3', variants: BED_TAKES, gain: (s, m) => 0.35 * Math.max(0, 1 - Math.abs((m.amb.wind ?? s) - 0.88) / 0.3) },
+  ],
 }
 
 /** Events with a clip of their own (`sounds/<clip>.m4a`), and how loud by their size. */
@@ -336,6 +349,7 @@ export const EVENTS: Partial<Record<SoundKind, { clip: string; variants: number;
   swish: { clip: 'events/swish', variants: 3, gain: v => 0.25 + 0.6 * v },
   clank: { clip: 'events/clank', variants: 1, gain: v => 0.25 + 0.35 * v },
   lap: { clip: 'events/lap', variants: 3, gain: v => 0.35 + 0.6 * v },
+  horn: { clip: 'events/horn', variants: 3, gain: v => 0.35 + 0.6 * v },
 }
 
 /** A clip's file: one of its variants, picked by a hash of the moment and the clip (no fixed rotation to fall in step with). */
@@ -378,6 +392,13 @@ export const MOODS: Record<string, (m: SoundMood) => BedMood> = {
   ski: m => {
     const b = band(10 * (m.amb.wind ?? m.level / 10))
     return { key: `w${b}`, s: BAND_S[b]!, amb: { wind: BAND_S[b] } }
+  },
+  // The train by its speed (amb.wind: the level that runs at it), standing still its own mood.
+  train: m => {
+    const w = m.amb.wind ?? m.level / 10
+    if (w < 0.02) return { key: 'v0', s: 0, amb: { wind: 0 } }
+    const b = band(10 * w)
+    return { key: `v${b + 1}`, s: BAND_S[b]!, amb: { wind: BAND_S[b] } }
   },
   balloon: m => {
     const b = band(m.level)
@@ -535,6 +556,7 @@ const VOICES: Record<SoundKind, { len: number; voice: (m: Mix, dt: number, v: nu
   lap: { len: 1.6, voice: (m, dt, v) => m.white() * Math.min(1, dt / 0.6) * decay(dt, 0.5) * (0.15 + 0.2 * v) },
   crash: { len: 1.6, voice: (m, dt, v) => m.white() * Math.min(1, dt / 0.15) * decay(dt, 0.45) * (0.35 + 0.35 * v) },
   swish: { len: 0.35, voice: (m, dt, v) => m.white() * Math.sin(Math.PI * Math.min(1, dt / 0.35)) * (0.15 + 0.25 * v) },
+  horn: { len: 1.2, voice: (m, dt) => (Math.sin(TAU * 311 * dt) + Math.sin(TAU * 370 * dt) + Math.sin(TAU * 466 * dt)) * Math.min(1, dt / 0.04) * Math.min(1, (1.2 - dt) / 0.1) * 0.15 },
 }
 
 /** A number in [0, 1) from a seed, scattered (neighbouring seeds land far apart). */

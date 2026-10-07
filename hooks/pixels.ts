@@ -1,4 +1,4 @@
-// REVISION: flow-v46-dry-dead
+// REVISION: flow-v122-noise-grey
 //
 // Small pieces the scene renderers share: packed-RGB color math, hashes,
 // glyph tables, and the fit of a cell's four quadrant pixels to the two
@@ -50,6 +50,21 @@ export function hash1(n: number): number {
   h = Math.imul(h, 0xc2b2ae35)
   h ^= h >>> 16
   return (h >>> 0) / 0x1_0000_0000
+}
+
+/** Smooth 1-D value noise in [0, 1): hash1 at each whole x, eased between (surf's swell, the train's hills). */
+export function noise1(x: number, seed: number): number {
+  const i = Math.floor(x)
+  const f = x - i
+  const a = hash1(i * 7919 + seed)
+  const b = hash1((i + 1) * 7919 + seed)
+  return a + (b - a) * f * f * (3 - 2 * f)
+}
+
+/** `c` moved `k` (0..1) of the way to its own grey (by luma): an overcast, smoky cast. */
+export function grey(c: number, k: number): number {
+  const l = (((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11) | 0
+  return mix(c, (l << 16) | (l << 8) | l, k)
 }
 
 /** A stable hash of (x, y, salt) to [0, 1), murmur-finalized (the ski run's). */

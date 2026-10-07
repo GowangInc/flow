@@ -1,4 +1,4 @@
-// REVISION: flow-v121-fresh-defaults
+// REVISION: flow-v122-train
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -69,7 +69,7 @@ import { frameSvg } from './svg'
 import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent } from './sound'
 
 
-const FLOW_REVISION = 'flow-v121-fresh-defaults'
+const FLOW_REVISION = 'flow-v122-train'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */

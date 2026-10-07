@@ -31,7 +31,7 @@
     "style": {
       "type": "string",
       "title": "Scene",
-      "description": "fire: a ░▒▓█ fire with sparks and smoke; warp: stars that speed up to hyperspace; avalon: a colony ship whose shield burns up the asteroids that hit it; balloon: a hot-air balloon that climbs from the grass to space; engine: a steampunk engine that runs up to full speed; falcon: a Falcon 9 carrying Dragon: its booster lands on its legs, Dragon comes home under parachutes to a splashdown; starship: a bigger rocket that hot-stages: its booster is caught by the tower's arms, the Ship splashes down; surf: a surfer and the swell; ski: a skier down the mountain; bubbles: bubbles fizzing up",
+      "description": "fire: a ░▒▓█ fire with sparks and smoke; warp: stars that speed up to hyperspace; avalon: a colony ship whose shield burns up the asteroids that hit it; balloon: a hot-air balloon that climbs from the grass to space; engine: a steampunk engine that runs up to full speed; falcon: a Falcon 9 carrying Dragon: its booster lands on its legs, Dragon comes home under parachutes to a splashdown; starship: a bigger rocket that hot-stages: its booster is caught by the tower's arms, the Ship splashes down; surf: a surfer and the swell; ski: a skier down the mountain; bubbles: bubbles fizzing up; train: a train through the countryside, faster with the work",
       "default": "fire",
       "options": [
         "fire",
@@ -43,7 +43,8 @@
         "starship",
         "surf",
         "ski",
-        "bubbles"
+        "bubbles",
+        "train"
       ]
     },
     "idle": {
@@ -75,7 +76,7 @@
     "time": {
       "type": "string",
       "title": "Day or night",
-      "description": "For balloon, falcon, starship, surf, ski and bubbles: clock follows your local time (night from 19:00 to 7:00); day or night pins it",
+      "description": "For balloon, falcon, starship, surf, ski, bubbles and train: clock follows your local time (night from 19:00 to 7:00); day or night pins it",
       "default": "clock",
       "options": [
         "clock",

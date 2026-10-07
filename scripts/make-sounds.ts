@@ -1,4 +1,4 @@
-// REVISION: flow-v119-no-tones
+// REVISION: flow-v123-train-faster
 //
 // Builds the soundscapes' clips into sounds/ (AAC, mono 22.05 kHz) and the
 // manifest hooks/sound-files.ts. Each recipe makes a WAV with sox (and Node,
@@ -605,7 +605,82 @@ const RECIPES: Record<string, Record<string, Recipe>> = {
       },
     },
   },
+  train: {
+    // A diesel-hauled train, matched to recordings of a train's wheels heard
+    // from a carriage (a rolling roar strongest at 250-500 Hz, falling away
+    // above 2 kHz), a freight train passing (the same roar from the lineside),
+    // a diesel locomotive idling (firing at ~30 Hz, its 3rd harmonic the
+    // strongest, over a broadband clatter as loud) and a diesel railcar pulling
+    // away (~95 Hz under load, brighter). The bed is the roll, the wind and the
+    // engine; the horn is an event.
+    rumble: {
+      variants: 3,
+      make: (out, t) => {
+        synth(t.tmp('r.wav'), 'synth', SLEN, 'pinknoise', 'lowpass', 1800, 'lowpass', 3000, 'highpass', 90, 'equalizer', 420, '1q', 4, 'bass', -3, 100)
+        synth(t.tmp('h.wav'), 'synth', SLEN, 'whitenoise', 'gain', -42, 'highpass', 2500, 'lowpass', 9000)
+        fx([t.tmp('r.wav'), t.tmp('h.wav')], t.tmp('m.wav'), 'gain', '-n', -3)
+        // The track's roughness swelling and easing at random (never in a rhythm).
+        turbulence(t.tmp('m.wav'), seedOf(out), [[0.31, 0.16], [1.3, 0.1], [4.1, 0.05]])
+        fx([t.tmp('m.wav')], out, 'reverb', 20, 'gain', '-n', -3, ...bedEnd(t))
+      },
+    },
+    rush: {
+      variants: 3,
+      make: (out, t) => {
+        // Air tearing past the carriages: a rush with a whistle wandering through it.
+        wander(t.tmp('w.wav'), seedOf(out), SLEN, 700, 2600, 0.5, 40)
+        synth(t.tmp('r.wav'), 'synth', SLEN, 'pinknoise', 'highpass', 500, 'lowpass', 5000, 'gain', -3)
+        turbulence(t.tmp('r.wav'), seedOf(out) + 1, [[0.45, 0.3], [1.9, 0.15]])
+        fx([t.tmp('w.wav'), t.tmp('r.wav')], t.tmp('m.wav'), 'gain', '-n', -3)
+        fx([t.tmp('m.wav')], out, 'reverb', 30, 'gain', '-n', -3, ...bedEnd(t))
+      },
+    },
+    air: {
+      variants: 3,
+      make: (out, t) => noiseBed(out, t, ['pinknoise', 'lowpass', 900, 'highpass', 80], [[0.23, 0.35], [0.9, 0.15]], ['reverb', 40], -6),
+    },
+    // The diesel: idling (~30 Hz), working (~62 Hz), flat out (~95 Hz). Its
+    // firing is a pitch, its harmonics exact multiples of it (any beat between
+    // them would throb), and over it the engine's broadband clatter.
+    ...Object.fromEntries(
+      (
+        [
+          [1, 30.5, 900, 0],
+          [2, 62, 1100, 1],
+          [3, 95, 1300, 2],
+        ] as const
+      ).map(([n, hz, clatter, bright]) => [
+        `drone${n}`,
+        {
+          variants: 3,
+          make: (out: string, t: Tools) => {
+            const k = [1, 2, 3, 4, 5, 6, 8, 10, 12]
+            const g = [0.15, 0.45, 0.6, 0.35, 0.3, 0.22, 0.14, 0.1, 0.06]
+            hum(t.tmp('h.wav'), seedOf(out), SLEN, k.filter(m => m * hz < 2000).map((m, i) => [m * hz, g[i]!] as const), 40)
+            fx([t.tmp('h.wav')], t.tmp('ho.wav'), 'overdrive', 6, 'gain', -12)
+            synth(t.tmp('n.wav'), 'synth', SLEN, 'pinknoise', 'gain', -6 + 1.5 * bright, 'highpass', 180, 'lowpass', 4000 + 600 * bright, 'equalizer', clatter, '1q', 3 + bright)
+            turbulence(t.tmp('n.wav'), seedOf(out) + 1, [[0.4, 0.1], [2.1, 0.06]])
+            fx([t.tmp('ho.wav'), t.tmp('n.wav')], out, 'reverb', 20, 'gain', '-n', -3, ...bedEnd(t, false))
+          },
+        },
+      ]),
+    ),
+  },
   events: {
+    horn: {
+      // A diesel's two-tone horn, high then low: each reed a steady pitch that's
+      // never pure (narrow resonances on noise, see hum) with its overtones,
+      // overdriven brassy, out in the open. Three takes, held for longer or shorter.
+      variants: 3,
+      make: (out, t) => {
+        const [a, b] = ([[0.42, 0.62], [0.32, 0.5], [0.55, 0.85]] as const)[t.v - 1]!
+        hum(t.tmp('h.wav'), seedOf(out), a + 0.2, [[466, 0.55], [932, 0.45], [1398, 0.28], [1864, 0.14]], 400)
+        hum(t.tmp('l.wav'), seedOf(out) + 1, b + 0.2, [[370, 0.55], [740, 0.45], [1110, 0.28], [1480, 0.14]], 400)
+        fx([t.tmp('h.wav')], t.tmp('h2.wav'), 'trim', 0, a, 'fade', 'q', 0.03, a, 0.05)
+        fx([t.tmp('l.wav')], t.tmp('l2.wav'), 'trim', 0, b, 'fade', 'q', 0.02, b, 0.14, 'pad', a + 0.03, 0)
+        fx([t.tmp('h2.wav'), t.tmp('l2.wav')], out, 'overdrive', 14, 'highpass', 220, 'lowpass', 5000, 'reverb', 45, 50, 70, 'gain', '-n', -2)
+      },
+    },
     blast: {
       // A rock blowing up on the shield, heard through the hull: raw noise, no
       // tone (see explosion), overdriven for grit but not squeezed (its punch
@@ -887,6 +962,6 @@ const files = readdirSync(OUT)
 const sorted = Object.keys(gains).sort()
 writeFileSync(
   join(ROOT, 'hooks', 'sound-files.ts'),
-  `// REVISION: flow-v106-sound-moods\n//\n// Written by scripts/make-sounds.ts: every clip in sounds/, and the gain that\n// puts each mood's mixed bed back to its layers' level (0: silent). Don't edit.\n\nexport const SOUND_FILES: readonly string[] = [\n${files.map(f => `  '${f}',`).join('\n')}\n]\n\nexport const BED_GAINS: Readonly<Record<string, number>> = {\n${sorted.map(k => `  '${k}': ${gains[k]},`).join('\n')}\n}\n`,
+  `// REVISION: flow-v122-train-sounds\n//\n// Written by scripts/make-sounds.ts: every clip in sounds/, and the gain that\n// puts each mood's mixed bed back to its layers' level (0: silent). Don't edit.\n\nexport const SOUND_FILES: readonly string[] = [\n${files.map(f => `  '${f}',`).join('\n')}\n]\n\nexport const BED_GAINS: Readonly<Record<string, number>> = {\n${sorted.map(k => `  '${k}': ${gains[k]},`).join('\n')}\n}\n`,
 )
 console.log(`hooks/sound-files.ts: ${files.length} clips, ${sorted.length} moods`)
