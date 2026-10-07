@@ -1,4 +1,4 @@
-// REVISION: flow-v120-per-session
+// REVISION: flow-v122-stale-rows
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -74,6 +74,31 @@ export function readConfig(options: Readonly<Record<string, unknown>> | undefine
 export function storedValue(field: keyof FlowConfig, value: FlowConfig[keyof FlowConfig]): string | number {
   if (field === 'idle') return value === 0 ? 'dark' : 'glow'
   return value
+}
+
+/** A /config row as `$.config.list()` reads it: its key, the value as stored, the values it takes. */
+export type StoredRow = { key: string; value: unknown; options?: readonly string[] }
+/** A row to write back: the value stored, and the one it stands for now. */
+export type StaleRow = { key: string; field: keyof FlowConfig; from: string; to: string | number }
+
+/**
+ * Flow's rows (`<plugin>.<field>`) holding a value none of their options are:
+ * a scene since renamed (`colony`, now `avalon`) or dropped (`river`, `lava`),
+ * an alias, idle's old `pilot`. Claude Code reads such a value as the row's
+ * default before Flow loads, and says so at every load; each comes back with
+ * what it stands for now (the default, for a scene that's gone), to write back.
+ */
+export function staleRows(rows: readonly StoredRow[], plugin: string): StaleRow[] {
+  const fields = Object.keys(readConfig(undefined)) as (keyof FlowConfig)[]
+  const stale: StaleRow[] = []
+  for (const row of rows) {
+    const field = fields.find(f => row.key === `${plugin}.${f}`)
+    const { value, options } = row
+    if (!field || !options || typeof value !== 'string' || options.includes(value)) continue
+    const to = storedValue(field, readConfig({ [field]: value })[field])
+    if (options.includes(String(to))) stale.push({ key: row.key, field, from: value, to })
+  }
+  return stale
 }
 
 export type FlowCommand =

@@ -1,4 +1,4 @@
-// REVISION: flow-v122-train
+// REVISION: flow-v123-stale-rows
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -24,8 +24,10 @@
 // in /config itself is a default, and shows in that session at once. The
 // defaults are read afresh before anything compares with them (another
 // session may have saved since): a running session keeps what it shows, and
-// `/flow save` saves exactly that. `/flow help` lists the command's forms
-// (see settings.ts, sessions.ts).
+// `/flow save` saves exactly that. Only a scene's own name is ever written
+// to /config; a row left holding one Flow no longer takes (a scene since
+// renamed or dropped) is written back as the one it stands for. `/flow help`
+// lists the command's forms (see settings.ts, sessions.ts).
 
 import { atom, update } from 'claude-code'
 import type { CommandRunInput, CommandRunResult, EngineInterface, Register } from 'claude-code'
@@ -48,6 +50,9 @@ import {
   type FlowLayout,
   nextTip,
   readTips,
+  staleRows,
+  type StaleRow,
+  type StoredRow,
 } from './settings'
 import {
   differences,
@@ -69,7 +74,7 @@ import { frameSvg } from './svg'
 import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent } from './sound'
 
 
-const FLOW_REVISION = 'flow-v122-train'
+const FLOW_REVISION = 'flow-v123-stale-rows'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -154,6 +159,37 @@ async function saveConfig($: EngineInterface, changes: Partial<FlowConfig>): Pro
     }
   }
   return refused
+}
+
+/** The /config rows, each with its value as stored (none where the host can't list them). */
+async function storedRows($: EngineInterface): Promise<readonly StoredRow[]> {
+  try {
+    return await $.config.list()
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Write rows left holding a value Flow no longer takes (see staleRows) back
+ * as the one they stand for. This load already reads them so (readDefaults:
+ * readConfig), but Claude Code reads such a row as its default before Flow
+ * runs and says so at every load: in the debug log, or the transcript while
+ * a plugin folder hot-reloads. Nothing here can stop that once; written back,
+ * it stops. Noted in the debug log alone. A refused write (a row the
+ * organization or `--settings` owns) changes nothing here.
+ */
+async function repairRows($: EngineInterface, stale: readonly StaleRow[]): Promise<void> {
+  for (const row of stale) {
+    // (Said first: the write reloads the module, which may cut this short.)
+    $.ui.log(`[flow] /config ${row.key} held "${row.from}", none of its options: writing it as ${row.to}`, { to: 'debug' })
+    try {
+      const { deny } = await $.config.set({ key: row.key, value: row.to })
+      if (deny) $.ui.log(`[flow] /config ${row.key} not written (${deny}): read as ${row.to} all the same`, { to: 'debug' })
+    } catch {
+      // No such row to write: read as meant all the same.
+    }
+  }
 }
 
 /**
@@ -594,6 +630,9 @@ export const register: Register = (on, options) => {
       description: 'An ambient scene that moves with the work: fire, surf, ski, rockets and more',
       argumentHint: '[<scene> | next | day | night | clock | auto | 1-10 | off | band | spine | save | reset | help]',
     })
+
+    // /config rows holding a scene Flow no longer takes (renamed, dropped), written back as the one meant.
+    await repairRows($, staleRows(await storedRows($), PLUGIN))
 
     // One-time move of settings kept in $.store before they were userConfig.
     const legacy: Partial<FlowConfig> = {}

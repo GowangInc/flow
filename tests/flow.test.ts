@@ -1,11 +1,11 @@
-// REVISION: flow-v124-train-faster
+// REVISION: flow-v125-stale-rows
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten } from '../hooks/activity'
-import { nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, statusText } from '../hooks/settings'
+import { nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
 import { effortOf, ownInSession, piLinesWritten } from '../pi/mapping'
@@ -51,6 +51,8 @@ type Captured = {
   invalidates?: number
   plays?: string[]
   toasts?: string[]
+  /** What `$.ui.log` was given, and where to. */
+  logs?: { text: string; to?: string }[]
   /** The session's id, as `$.session.id()` answers it (change it to move the process to another session). */
   session?: string
   /**
@@ -88,7 +90,10 @@ function engine(
     return Text({ children: 'engine band' })
   })
   on('session.start', () => ({ cwd: '/tmp' }))
-  on('ui.log', () => ({ value: undefined }))
+  on('ui.log', (_, e) => {
+    ;(captured.logs ??= []).push({ text: e.text, to: e.to })
+    return { value: undefined }
+  })
   on('ui.toast', (_, e) => {
     ;(captured.toasts ??= []).push((e as { text: string }).text)
     return { value: undefined }
@@ -817,6 +822,43 @@ test('config values are validated, falling back to defaults', async () => {
   })
   expect(readConfig({ mode: 'loud', style: 'hearth', idle: 'x', level: 5.5 })).toEqual(readConfig(undefined))
   expect(readConfig({ level: 42 }).level).toBe(8)
+})
+
+test('/config rows left on a scene since renamed or dropped read as the one meant, to be written back', () => {
+  const style = { key: 'flow.style', options: STYLES }
+  expect(staleRows([{ ...style, value: 'colony' }], 'flow')).toEqual([{ key: 'flow.style', field: 'style', from: 'colony', to: 'avalon' }])
+  expect(staleRows([{ ...style, value: 'ocean' }], 'flow')[0]?.to).toBe('surf')
+  expect(staleRows([{ ...style, value: 'river' }], 'flow')[0]?.to).toBe('fire') // dropped: the default
+  expect(staleRows([{ ...style, value: 'lava' }], 'flow')[0]?.to).toBe('fire')
+  expect(staleRows([{ key: 'flow.idle', value: 'pilot', options: ['glow', 'dark'] }], 'flow')[0]?.to).toBe('glow')
+  // Every old name and alias stands for a scene of today's.
+  for (const d of SCENES) {
+    for (const a of d.aliases ?? []) expect(staleRows([{ ...style, value: a }], 'flow')[0]?.to).toBe(d.name)
+  }
+  // A row already right, another plugin's, the panel's own, one with no options: left alone.
+  const rows = [
+    { ...style, value: 'surf' },
+    { key: 'other.style', value: 'colony', options: ['a', 'b'] },
+    { key: 'theme', value: 'colony', options: ['light', 'dark'] },
+    { key: 'flow.level', value: 3 },
+  ]
+  expect(staleRows(rows, 'flow')).toEqual([])
+})
+
+test('a /config row left on an old scene (colony) is written back as avalon at the start, said in the debug log alone', { options: { style: 'colony' } }, async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  // Claude Code reads the stored `colony` as the default (fire) before Flow loads; /config's row still holds it.
+  const row = { key: 'flow.style', label: 'Scene', kind: 'choice', value: 'colony', options: [...STYLES], provider: { plugin: 'flow', tier: 'user' }, isLocked: false }
+  on('config.list', () => ({ value: [row] as never }))
+  await start($)
+  expect(seen.config).toEqual([['flow.style', 'avalon']])
+  expect((await flow($)).split('\n')[0]).toContain('avalon')
+  const said = (seen.logs ?? []).filter(l => l.text.includes('colony'))
+  expect(said).toHaveLength(1)
+  expect(said[0]!.to).toBe('debug')
+  expect((seen.toasts ?? []).some(t => t.includes('colony'))).toBe(false)
 })
 
 test('settings arrive from /config', { options: { mode: 'manual', style: 'surf', level: 3 } }, async ($, on) => {
