@@ -1,4 +1,4 @@
-// REVISION: flow-v123-stale-rows
+// REVISION: flow-v124-first-tips
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -38,6 +38,7 @@ import { FRAME_MS, SceneDriver } from './scene'
 import {
   changedText,
   changesFor,
+  firstTips,
   helpText,
   ownHint,
   parseFlowArgs,
@@ -74,7 +75,7 @@ import { frameSvg } from './svg'
 import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent } from './sound'
 
 
-const FLOW_REVISION = 'flow-v123-stale-rows'
+const FLOW_REVISION = 'flow-v124-first-tips'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -464,6 +465,22 @@ async function resetSession($: EngineInterface, ctx: SceneCtx): Promise<string> 
 
 const TIPS = 'tips'
 
+/**
+ * Start keeping tips, where none are kept yet (see firstTips): from a
+ * session's start, before its `/flow` stores anything, so anything else in
+ * the store (a session's own settings, old overrides, the older settings,
+ * whatever Flow keeps there next) is from before, as is a `usedBefore` the
+ * caller saw. Tips are the person's, not a session's: one record for all.
+ */
+async function seedTips($: EngineInterface, usedBefore: boolean, settings: FlowConfig): Promise<void> {
+  try {
+    const keys = await $.store.keys()
+    if (!keys.includes(TIPS)) await $.store.set(TIPS, firstTips(usedBefore || keys.length > 0, settings))
+  } catch {
+    // Unread: the tips start from nothing, as for someone new.
+  }
+}
+
 /** A chance for a one-time tip (see nextTip), the store keeping which have been given: the tip, if one's due. */
 async function takeTip($: EngineInterface, cfg: FlowConfig): Promise<string | undefined> {
   try {
@@ -631,8 +648,15 @@ export const register: Register = (on, options) => {
       argumentHint: '[<scene> | next | day | night | clock | auto | 1-10 | off | band | spine | save | reset | help]',
     })
 
+    // What's left of Flow from before this load, read before anything below writes: /config's rows as stored,
+    // the balloon's altitude (this session's), the store (seedTips). Someone new starts on the tips; someone
+    // who had Flow before they were kept is taken as having had them.
+    const stale = staleRows(await storedRows($), PLUGIN)
+    const altitude = await savedAltitude($)
+    await seedTips($, stale.length > 0 || altitude > 0, readConfig(options))
+
     // /config rows holding a scene Flow no longer takes (renamed, dropped), written back as the one meant.
-    await repairRows($, staleRows(await storedRows($), PLUGIN))
+    await repairRows($, stale)
 
     // One-time move of settings kept in $.store before they were userConfig.
     const legacy: Partial<FlowConfig> = {}
@@ -662,7 +686,6 @@ export const register: Register = (on, options) => {
     void pruneSessions($, session.id)
 
     // Resume the balloon where the last load left it.
-    const altitude = await savedAltitude($)
     for (const d of [driver, desktopDriver]) {
       const balloon = d.sceneFor('balloon')
       if (balloon instanceof Balloon) balloon.seed(altitude)

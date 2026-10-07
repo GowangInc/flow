@@ -1,4 +1,4 @@
-// REVISION: flow-v122-stale-rows
+// REVISION: flow-v123-first-tips
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -391,6 +391,21 @@ export function readTips(v: unknown): Tips {
   for (const k of ['otherScene', 'triedSound', 'scenesTold', 'soundTold'] as const) if (o[k] === true) t[k] = true
   if (typeof o.since === 'number' && Number.isInteger(o.since) && o.since >= 0) t.since = o.since
   return t
+}
+
+/**
+ * The tips' first record, for someone with none (kept from a session's start,
+ * before its own `/flow` can store anything). Someone new has been told
+ * nothing. Someone who had Flow before tips were kept (`usedBefore`: other
+ * state of Flow's already kept, a /config row from an older Flow) or has
+ * changed a default (`settings`: the /config rows) has been told both: they
+ * may well have found the other scenes and the sound already, and been
+ * through them.
+ */
+export function firstTips(usedBefore: boolean, settings: FlowConfig): Tips {
+  const defaults = readConfig(undefined)
+  const changed = (Object.keys(defaults) as (keyof FlowConfig)[]).some(k => settings[k] !== defaults[k])
+  return usedBefore || changed ? { scenesTold: true, soundTold: true } : {}
 }
 
 /**

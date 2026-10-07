@@ -1,11 +1,11 @@
-// REVISION: flow-v125-stale-rows
+// REVISION: flow-v126-first-tips
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten } from '../hooks/activity'
-import { nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
+import { firstTips, nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
 import { effortOf, ownInSession, piLinesWritten } from '../pi/mapping'
@@ -701,6 +701,48 @@ test('tips: the other scenes once, while it is still the fire; the sound three c
   }
   // Stored junk is ignored.
   expect(readTips({ scenesTold: 'yes', since: -1, soundTold: true })).toEqual({ soundTold: true })
+})
+
+test('tips: someone who had Flow before tips were kept is taken as told; someone new starts on them', () => {
+  const tipsOver = (t: ReturnType<typeof firstTips>, cfg = readConfig({})) => {
+    const said: string[] = []
+    for (let i = 0; i < 8; i++) {
+      const r = nextTip(t, cfg)
+      if (r.tip) said.push(r.tip)
+      t = r.tips
+    }
+    return said
+  }
+  expect(firstTips(false, readConfig({}))).toEqual({})
+  expect(tipsOver(firstTips(false, readConfig({})))).toHaveLength(2) // the scenes, then the sound
+  // Flow's state from before, or any setting changed (the sound tried and turned off again leaves `off`, the default).
+  expect(tipsOver(firstTips(true, readConfig({})))).toEqual([])
+  for (const changed of [{ style: 'surf' }, { level: 5 }, { idle: 'dark' }, { mode: 'manual' }, { layout: 'spine' }, { time: 'night' }]) {
+    expect(tipsOver(firstTips(false, readConfig(changed)))).toEqual([])
+  }
+})
+
+test('tips: an existing user (Flow state in the store, no tips kept yet) is never told, at the start or under /flow', async ($, on) => {
+  mock.clock(on)
+  mock.store(on, { overrides: { sound: 'off' } }) // a session that ended without writing it through
+  const seen = engine(on)
+  await start($)
+  expect(seen.toasts ?? []).toEqual([])
+  for (let i = 0; i < 6; i++) expect(await flow($, '')).not.toContain('flow:')
+})
+
+test("tips: someone new who picks a scene before any tip, then reloads, is still new: the sound tip comes", async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const quietStart = () =>
+    ($ as unknown as { session: { start: (a: object) => Promise<unknown> } }).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: false })
+  await quietStart() // no prompt to toast over
+  expect(await flow($, 'surf')).not.toContain('flow:') // (a scene found: no scenes tip)
+  await start($) // a reload: the overrides it stored are this user's own, not from before
+  expect(seen.toasts ?? []).toEqual([])
+  expect(await flow($, '')).not.toContain('flow:')
+  expect(await flow($, '')).toContain('`/flow sound` turns it on')
 })
 
 test('tips: starting on the fire shows the scenes tip once, as a toast', async ($, on) => {
