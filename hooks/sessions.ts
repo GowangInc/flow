@@ -1,10 +1,17 @@
-// REVISION: flow-v120-per-session
+// REVISION: flow-v121-fresh-defaults
 //
 // Each session's own settings: what `/flow` set in it, kept under the
 // session's id over the defaults every session starts from (/config in
 // Claude Code, ~/.pi/agent/flow.json in pi). A field the session never set
 // follows the default. Pure: no engine imports; the adapters keep the
 // records (Claude Code in its store, one key a session; pi in the session).
+//
+// The defaults can change under a running session (another session's
+// `/flow save`, a /config change elsewhere) without it hearing: the adapters
+// read them afresh before anything compares with them, and what the session
+// shows that they no longer hold becomes its own (pinShown). So nothing done
+// elsewhere changes a running session, a resume shows what it showed, and
+// `/flow save` saves exactly what it shows.
 
 import { readConfig, storedValue, type FlowConfig } from './settings'
 import { styleNamed } from './styles'
@@ -70,6 +77,24 @@ export function differences(cfg: FlowConfig, defaults: FlowConfig): Own {
     if (cfg[k] !== defaults[k]) (out as Record<string, unknown>)[k] = cfg[k]
   }
   return out
+}
+
+/**
+ * The defaults as they are now (`fresh`), against what the session shows
+ * (`cfg`): a field it shows that it never set itself, and that the defaults
+ * no longer hold, changed under it. It becomes the session's own, so the
+ * session goes on showing it and a resume brings it back. Answers the own
+ * settings after, and whether any were added.
+ */
+export function pinShown(cfg: FlowConfig, own: Own, fresh: FlowConfig): { own: Own; pinned: boolean } {
+  const out: Own = { ...own }
+  let pinned = false
+  for (const k of Object.keys(fresh) as (keyof FlowConfig)[]) {
+    if (k in own || cfg[k] === fresh[k]) continue
+    ;(out as Record<string, unknown>)[k] = cfg[k]
+    pinned = true
+  }
+  return { own: out, pinned }
 }
 
 /**

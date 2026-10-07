@@ -1,4 +1,4 @@
-// REVISION: flow-v120-per-session
+// REVISION: flow-v121-fresh-defaults
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -21,8 +21,11 @@
 // in the store under the session's id, so a reload or a resume brings it
 // back. `/flow save` writes the session's settings to /config, the default
 // for new sessions; `/flow reset` puts the session back on it. A change made
-// in /config itself is a default, and shows in that session at once.
-// `/flow help` lists the command's forms (see settings.ts, sessions.ts).
+// in /config itself is a default, and shows in that session at once. The
+// defaults are read afresh before anything compares with them (another
+// session may have saved since): a running session keeps what it shows, and
+// `/flow save` saves exactly that. `/flow help` lists the command's forms
+// (see settings.ts, sessions.ts).
 
 import { atom, update } from 'claude-code'
 import type { CommandRunInput, CommandRunResult, EngineInterface, Register } from 'claude-code'
@@ -50,6 +53,7 @@ import {
   differences,
   type Own,
   ownAfterSwitch,
+  pinShown,
   readOwn,
   readRecord,
   SESSION_PREFIX,
@@ -65,7 +69,7 @@ import { frameSvg } from './svg'
 import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent } from './sound'
 
 
-const FLOW_REVISION = 'flow-v120-per-session'
+const FLOW_REVISION = 'flow-v121-fresh-defaults'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -79,6 +83,8 @@ const AGENT_IDLE_POLL_MS = 5000 // otherwise: subagents can run on after a turn,
 const SESSION_POLL_MS = 5000
 /** After a session ends with the process going on (a /clear, a resume), the id is read every second this many times. */
 const SESSION_WATCH_CHECKS = 10
+/** How often the defaults are read afresh: another session may have saved, with no reload here. */
+const DEFAULTS_POLL_MS = 30_000
 /** A blit unanswered for this many ticks is presumed lost, not in flight. */
 const BLIT_STALE_TICKS = 15
 const MAX_ROWS = 5
@@ -180,7 +186,7 @@ export async function migrateOverrides($: EngineInterface): Promise<Own> {
  * settings over them, kept in the store under the id (sessions.ts). Terminal
  * and desktop views of one session are one load, so they share all of it.
  */
-type Session = {
+export type Session = {
   /** `$.session.id()`: undefined where the host can't say, and then nothing is kept. */
   id: string | undefined
   defaults: FlowConfig
@@ -219,12 +225,68 @@ async function loadRecord($: EngineInterface, id: string): Promise<SessionRecord
 async function keepOwn($: EngineInterface, s: Pick<Session, 'id' | 'own'>): Promise<boolean> {
   if (!s.id) return false
   try {
-    if (Object.keys(s.own).length) await $.store.set(sessionKey(s.id), storedRecord(s.own, await $.clock.now()))
+    const at = await $.clock.now()
+    // (Its own as they are now, after the wait: a change made meanwhile is kept too.)
+    if (Object.keys(s.own).length) await $.store.set(sessionKey(s.id), storedRecord(s.own, at))
     else await $.store.delete(sessionKey(s.id))
     return true
   } catch {
     return false
   }
+}
+
+/**
+ * The defaults as /config holds them now (a row it doesn't list keeps
+ * `fallback`'s value), or undefined where it can't say. Not the options this
+ * module loaded with: another session may have saved since, and whether a
+ * settings change reloads the module in every running session is the host's
+ * business.
+ */
+async function readDefaults($: EngineInterface, fallback: FlowConfig): Promise<FlowConfig | undefined> {
+  try {
+    const rows: Record<string, unknown> = storedOwn(fallback)
+    for (const row of await $.config.list()) {
+      if (row.key.startsWith(`${PLUGIN}.`)) rows[row.key.slice(PLUGIN.length + 1)] = row.value
+    }
+    return readConfig(rows)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Read the defaults afresh: what the session shows that they no longer hold
+ * changed under it, and becomes its own (sessions.ts: pinShown), so it goes on
+ * showing it, a resume brings it back, and what's compared with the defaults
+ * (the status, `/flow save`, `/flow reset`) compares with them as they are.
+ */
+export async function refreshDefaults($: EngineInterface, ctx: SceneCtx): Promise<void> {
+  const s = ctx.session
+  const fresh = await readDefaults($, s.defaults)
+  if (!fresh) return
+  const { own, pinned } = pinShown(ctx.driver.cfg, s.own, fresh)
+  s.defaults = fresh
+  if (!pinned) return
+  s.own = own
+  await keepOwn($, s)
+}
+
+/**
+ * Open the session this load is in: the defaults as /config holds them
+ * (`fallback`, the options this module loaded with and anything just written
+ * to /config, where it can't say), its own settings over them. A new session
+ * has none, and shows the defaults.
+ */
+export async function openSession($: EngineInterface, ctx: SceneCtx, fallback: FlowConfig): Promise<void> {
+  const s = ctx.session
+  s.defaults = (await readDefaults($, fallback)) ?? fallback
+  s.id = await sessionId($)
+  s.ended = undefined
+  s.watch = 0
+  const record = s.id === undefined ? undefined : await loadRecord($, s.id)
+  s.own = record?.own ?? {}
+  if (record) await keepOwn($, s) // (marked used: the sessions used last are the ones kept)
+  ctx.applyLocal(withOwn(s.defaults, s.own))
 }
 
 /** Forget the sessions unused longest, past those kept (sessions.ts: staleSessions); never this one. */
@@ -254,7 +316,7 @@ async function spineIsUp($: EngineInterface): Promise<boolean> {
 }
 
 /** What `/flow` needs of the loaded module. */
-type SceneCtx = {
+export type SceneCtx = {
   driver: SceneDriver
   session: Session
   /** Apply a change here at once (the caller invalidates). */
@@ -318,6 +380,8 @@ async function moveSession($: EngineInterface, ctx: SceneCtx): Promise<boolean> 
     if (s.watch > 0) s.watch--
     return false
   }
+  // (What the session it leaves showed is kept as it was, against the defaults as they are now.)
+  await refreshDefaults($, ctx)
   const record = await loadRecord($, id)
   const { own, carried } = ownAfterSwitch(record, s.own, s.ended)
   s.id = id
@@ -377,7 +441,7 @@ async function takeTip($: EngineInterface, cfg: FlowConfig): Promise<string | un
 }
 
 /** `/flow`: show, help, or apply a change, keep it, and answer. */
-async function runScene($: EngineInterface, e: CommandRunInput, ctx: SceneCtx): Promise<CommandRunResult> {
+export async function runScene($: EngineInterface, e: CommandRunInput, ctx: SceneCtx): Promise<CommandRunResult> {
   const reply = await sceneReply($, e, ctx)
   // A one-time tip goes under the reply (the other scenes, or the sound).
   const tip = await takeTip($, ctx.driver.cfg)
@@ -387,8 +451,10 @@ async function runScene($: EngineInterface, e: CommandRunInput, ctx: SceneCtx): 
 async function sceneReply($: EngineInterface, e: CommandRunInput, ctx: SceneCtx): Promise<CommandRunResult> {
   const { driver, session } = ctx
   const cfg = driver.cfg
-  // (A /clear or a resume since the last look: the session it is now.)
+  // (A /clear or a resume since the last look: the session it is now. And the
+  // defaults as they are now: what follows compares with them.)
   await followSession($, ctx)
+  await refreshDefaults($, ctx)
   const cmd = parseFlowArgs(e.args)
   if (cmd.kind === 'show') return { text: statusText(cfg, driver.level(), driver.tint(), driver.clock, session.defaults) }
   if (cmd.kind === 'help') return { text: helpText() }
@@ -548,18 +614,11 @@ export const register: Register = (on, options) => {
     // written through to /config once, the defaults now (as are the legacy
     // ones), ahead of the reload the write brings.
     const pending = await migrateOverrides($)
-    session.defaults = { ...session.defaults, ...legacy, ...pending }
 
     // This session's own settings over the defaults: kept under its id, so a
     // reload (a /config change, an update) or a resume brings them back. A
     // new session has none, and starts on the defaults.
-    session.id = await sessionId($)
-    session.ended = undefined
-    session.watch = 0
-    const record = session.id === undefined ? undefined : await loadRecord($, session.id)
-    session.own = record?.own ?? {}
-    if (record) await keepOwn($, session) // (marked used: the sessions used last are the ones kept)
-    applyLocal(withOwn(session.defaults, session.own))
+    await openSession($, sceneCtx, { ...readConfig(options), ...legacy, ...pending })
     $.ui.invalidate('ui.render')
     void pruneSessions($, session.id)
 
@@ -764,11 +823,15 @@ export const register: Register = (on, options) => {
     countAgents()
     // The session's id, on the same clock: every 5 s, and every second for a
     // while after a session ends with the process going on (a /clear, a resume).
+    // And the defaults, every 30 s: another session's save shows here as this
+    // one's own, kept for a resume, even if no /flow is run here again.
     let lastIdRead = 0
+    let lastDefaultsRead = 0
     const pollAgents = () => {
       $.clock.after(AGENT_POLL_MS, () => {
         lastPoll += AGENT_POLL_MS
         lastIdRead += AGENT_POLL_MS
+        lastDefaultsRead += AGENT_POLL_MS
         const busy = activity.isWorking || subagentSeen
         if (busy || lastPoll >= AGENT_IDLE_POLL_MS) {
           lastPoll = 0
@@ -778,6 +841,10 @@ export const register: Register = (on, options) => {
         if (session.watch > 0 || lastIdRead >= SESSION_POLL_MS) {
           lastIdRead = 0
           followSession($, sceneCtx).catch(() => {})
+        }
+        if (lastDefaultsRead >= DEFAULTS_POLL_MS) {
+          lastDefaultsRead = 0
+          refreshDefaults($, sceneCtx).catch(() => {})
         }
         pollAgents()
       })
@@ -860,6 +927,13 @@ export const register: Register = (on, options) => {
     // The soundscape stops with the session. Its settings were kept as they
     // changed: nothing is written to /config (only `/flow save` does that).
     stopSound()
+    // The defaults may have changed since the last look (another session's
+    // save): what this one showed is kept for a resume.
+    try {
+      await refreshDefaults($, sceneCtx)
+    } catch {
+      // Kept as it last was.
+    }
     // A /clear or a resume from inside the session: the process goes on
     // under another id, with no `session.start`, so watch for it.
     if (e.reason === 'clear' || e.reason === 'resume') {
@@ -895,6 +969,11 @@ export const register: Register = (on, options) => {
     session.defaults = { ...session.defaults, [field]: value }
     applyLocal({ [field]: value })
     $.ui.invalidate('ui.render')
+    // (A read of the defaults that landed before the write kept the old value as the session's own: not so.)
+    if (session.own[field] !== undefined) {
+      delete session.own[field]
+      await keepOwn($, session)
+    }
     return result
   })
 

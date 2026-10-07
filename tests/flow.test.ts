@@ -1,19 +1,21 @@
-// REVISION: flow-v120-per-session
+// REVISION: flow-v121-fresh-defaults
 
-import type { On } from 'claude-code'
+import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten } from '../hooks/activity'
 import { nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, statusText } from '../hooks/settings'
-import { differences, ownAfterSwitch, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedRecord, withOwn } from '../hooks/sessions'
+import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
 import { effortOf, ownInSession, piLinesWritten } from '../pi/mapping'
+import { PiSettings, type SessionEntries } from '../pi/session'
+import type { PiSessionEntry } from '../pi/types'
 import { Balloon, skyColor } from '../hooks/balloon'
 import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
 import { makeScene, nextStyle, SCENES, STYLES, styleNamed } from '../hooks/styles'
-import { migrateOverrides } from '../hooks/register'
+import { migrateOverrides, openSession, runScene, type SceneCtx } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
@@ -50,6 +52,19 @@ type Captured = {
   toasts?: string[]
   /** The session's id, as `$.session.id()` answers it (change it to move the process to another session). */
   session?: string
+  /**
+   * /config's flow rows as stored (`flow.style`: 'surf'), shared by every
+   * session: given, `$.config.list()` answers from them and a save writes
+   * them; left out, it doesn't answer and the plugin goes by its options.
+   */
+  rows?: Record<string, unknown>
+}
+
+/** /config's flow rows as `$.config.list()` lists them: every one, the manifest's default where none is stored. */
+function configRows(rows: Readonly<Record<string, unknown>>) {
+  const all: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(storedOwn(readConfig(undefined)))) all[`flow.${k}`] = v
+  return Object.entries({ ...all, ...rows }).map(([key, value]) => ({ key, value }))
 }
 
 /** Stand for the engine beneath the plugin: its band, session start, calls. */
@@ -88,8 +103,11 @@ function engine(
   })
   on('config.set', (_, e) => {
     captured.config.push([e.key, e.value])
+    if (captured.rows) captured.rows[e.key] = e.value
     return { value: e.value }
   })
+  const rows = captured.rows
+  if (rows) on('config.list', () => ({ value: configRows(rows) as never }))
   return captured
 }
 
@@ -1544,7 +1562,7 @@ test('sessions: a /clear carries the settings on to the new conversation; a resu
 test('sessions: /flow save makes this session\'s settings the default (/config); /flow reset goes back to it', async ($, on) => {
   mock.clock(on)
   const store = memoryStore(on)
-  const seen = engine(on)
+  const seen = engine(on, { blits: [], config: [], rows: {} })
   await start($)
   expect((await flow($, 'save')).split('\n\n')[0]).toBe('already your default: new sessions start this way')
   await flow($, 'surf')
@@ -1564,7 +1582,7 @@ test('sessions: /flow save makes this session\'s settings the default (/config);
   expect((await flow($)).split('\n')[0]).toMatch(/^surf, holding 5\/10/)
   expect(store.has(sessionKey('session-a'))).toBe(false)
   expect((await flow($, 'reset')).split('\n\n')[0]).toBe('already on your default')
-  // A new session starts on what was saved.
+  // A new session starts on what was saved (/config's rows: the options a new process loads with).
   seen.session = 'session-b'
   await start($)
   expect((await flow($)).split('\n')[0]).toMatch(/^surf, holding 5\/10/)
@@ -1670,6 +1688,177 @@ test('pi: a session\'s own settings are its latest flow entry on the branch', ()
   expect(ownInSession([])).toEqual({})
   expect(ownInSession([entry('1', { own: { style: 'surf' } }), { type: 'message', id: '2' }, entry('3', { own: { style: 'ski', sound: 'on' } }), entry('4', { own: {} }, 'other')])).toEqual({ style: 'ski', sound: 'on' })
   expect(ownInSession([entry('1', { own: { style: 'surf' } }), entry('2', { own: {} })])).toEqual({})
+})
+
+// ── The defaults, read afresh ────────────────────────────────────────────
+
+/** One store and one /config, shared by every session (process) on the machine. */
+type Shared = { store: Map<string, unknown>; rows: Record<string, unknown> }
+
+/**
+ * A Claude Code session in a process of its own, over the shared store and
+ * /config: the plugin's `/flow` and its opening of the session, through a
+ * host answering just what they call. Nothing here reloads the module when
+ * /config changes: whether a host does is its own business.
+ */
+function sceneSession(shared: Shared, id: string) {
+  const json = (v: unknown) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)))
+  const $ = {
+    session: { id: async () => id },
+    store: {
+      get: async (k: string) => json(shared.store.get(k)),
+      set: async (k: string, v: unknown) => void shared.store.set(k, json(v)),
+      delete: async (k: string) => void shared.store.delete(k),
+      keys: async () => [...shared.store.keys()],
+    },
+    config: {
+      list: async () => configRows(shared.rows),
+      set: async ({ key, value }: { key: string; value: unknown }) => ((shared.rows[key] = value), { value }),
+    },
+    clock: { now: async () => 0 },
+    ui: { invalidate: () => {}, open: async () => ({ isPlaced: true }), close: async () => undefined, panes: async () => [] },
+  } as unknown as EngineInterface
+  const driver = new SceneDriver(readConfig(undefined), new Activity())
+  const ctx: SceneCtx = {
+    driver,
+    session: { id: undefined, defaults: readConfig(undefined), own: {}, ended: undefined, watch: 0 },
+    applyLocal: changes => driver.apply(changes),
+    leftSpine: () => {},
+  }
+  return {
+    cfg: driver.cfg,
+    open: () => openSession($, ctx, readConfig(undefined)),
+    /** `/flow <args>`, its reply without a tip under it. */
+    flow: async (args: string) => ((await runScene($, { args } as never, ctx)).text ?? '').split('\n\n')[0]!,
+  }
+}
+
+test('sessions: two at once on one store and one /config: B saves, then A changes and saves exactly what it shows', async () => {
+  const shared: Shared = { store: new Map(), rows: {} }
+  const a = sceneSession(shared, 'a')
+  const b = sceneSession(shared, 'b')
+  await a.open()
+  await b.open()
+  await b.flow('surf')
+  expect(await b.flow('save')).toBe('saved as your default: new sessions start with surf')
+  expect(shared.rows['flow.style']).toBe('surf')
+  expect(a.cfg.style).toBe('fire') // A carries on as it was
+  // A, its defaults read afresh: it still shows the fire, its own now, and saves what it shows.
+  expect(await a.flow('night')).toMatch(/^night until `\/flow clock`/)
+  expect(await a.flow('save')).toBe('saved as your default: new sessions start with fire, night')
+  expect(shared.rows).toMatchObject({ 'flow.style': 'fire', 'flow.time': 'night' })
+  expect(a.cfg).toMatchObject({ style: 'fire', time: 'night' })
+  expect(shared.store.has(sessionKey('a'))).toBe(false)
+  // A new session, and A resumed: exactly as A shows.
+  const c = sceneSession(shared, 'c')
+  await c.open()
+  expect(c.cfg).toEqual(a.cfg)
+  const a2 = sceneSession(shared, 'a')
+  await a2.open()
+  expect(a2.cfg).toEqual(a.cfg)
+  // B, still running, still shows the surf by day: its own now, and the status says the default moved.
+  expect((await b.flow('')).split('\n')[1]).toBe('just this session (your default: fire, night) · `/flow save` makes this the default · `/flow reset` goes back')
+  expect(b.cfg).toMatchObject({ style: 'surf', time: 'clock' })
+  const b2 = sceneSession(shared, 'b')
+  await b2.open()
+  expect(b2.cfg).toEqual(b.cfg)
+  // Reset goes to the default as it is now.
+  expect(await b.flow('reset')).toBe('back to your default: fire, night')
+  expect(b.cfg).toEqual(a.cfg)
+})
+
+test('sessions: the defaults changing under a running session (another one\'s save) leave it as it is, kept for a resume, with no /flow run there', async ($, on) => {
+  const clock = mock.clock(on)
+  const store = memoryStore(on)
+  const seen = engine(on, { blits: [], config: [], rows: {} })
+  seen.session = 'a'
+  await start($)
+  // Another session saves surf: /config's rows change under this one, which isn't reloaded.
+  seen.rows!['flow.style'] = 'surf'
+  await clock.advance(30_000) // read afresh every 30 s
+  expect(store.get(sessionKey('a'))).toMatchObject({ own: { style: 'fire' } })
+  // And when the session ends.
+  seen.rows!['flow.sound'] = 'on'
+  await endSession($, 'prompt_input_exit', 'a')
+  expect(store.get(sessionKey('a'))).toEqual({ own: { style: 'fire', sound: 'off' }, at: clock.now() })
+  // Resumed: as it was, and it says how the default differs.
+  await start($)
+  const status = await flow($)
+  expect(status.split('\n')[0]).toMatch(/^fire, auto/)
+  expect(status.split('\n')[0]).not.toContain('sound on')
+  expect(status).toContain('just this session (your default: surf, sound on)')
+  // A new session starts on the defaults as they are.
+  seen.session = 'b'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/^surf, .*sound on$/)
+  // Saved from the first again: /config takes all it shows, so new sessions start just so.
+  seen.session = 'a'
+  await start($)
+  expect((await flow($, 'save')).split('\n\n')[0]).toBe('saved as your default: new sessions start with fire, sound off')
+  expect(seen.rows).toMatchObject({ 'flow.style': 'fire', 'flow.sound': 'off' })
+})
+
+test('pi: two sessions on one flow.json: B saves, then A changes and saves exactly what it shows', async () => {
+  let json: Record<string, unknown> = {}
+  const file = {
+    load: async () => readConfig(json),
+    save: async (changes: Own) => {
+      json = { ...json, ...storedOwn(changes) }
+    },
+  }
+  const sessionOf = (): SessionEntries & { entries: PiSessionEntry[] } => {
+    const entries: PiSessionEntry[] = []
+    return { entries, branch: () => entries, keep: data => void entries.push({ type: 'custom', id: String(entries.length), customType: 'flow', data }) }
+  }
+  /** `/flow <args>` as the adapter runs it: flow.json read afresh first. */
+  const run = async (s: PiSettings, entries: SessionEntries, args: string) => {
+    await s.refresh(entries)
+    const cmd = parseFlowArgs(args)
+    if (cmd.kind === 'save') return (await s.save(entries)).text
+    if (cmd.kind === 'reset') return s.reset(entries)
+    return s.change(changesFor(cmd, s.cfg) ?? {}, entries)
+  }
+  const sa = sessionOf()
+  const sb = sessionOf()
+  const a = new PiSettings(readConfig(undefined), file)
+  const b = new PiSettings(readConfig(undefined), file)
+  await a.open(sa)
+  await b.open(sb)
+  await run(b, sb, 'surf')
+  expect(await run(b, sb, 'save')).toBe('saved as your default: new sessions start with surf')
+  expect(json.style).toBe('surf')
+  expect(a.cfg.style).toBe('fire')
+  await run(a, sa, 'night')
+  expect(await run(a, sa, 'save')).toBe('saved as your default: new sessions start with fire, night')
+  expect(json).toMatchObject({ style: 'fire', time: 'night' })
+  expect(a.cfg).toMatchObject({ style: 'fire', time: 'night' })
+  expect(ownInSession(sa.entries)).toEqual({})
+  // A new session, and A resumed: exactly as A shows.
+  const c = new PiSettings(readConfig(undefined), file)
+  await c.open(sessionOf())
+  expect(c.cfg).toEqual(a.cfg)
+  const a2 = new PiSettings(readConfig(undefined), file)
+  await a2.open(sa)
+  expect(a2.cfg).toEqual(a.cfg)
+  // B kept the surf by day as its own (for a resume too); reset goes to the default as it is now.
+  await b.refresh(sb)
+  expect(ownInSession(sb.entries)).toEqual({ style: 'surf', time: 'clock' })
+  expect(statusText(b.cfg, 1, 'normal', { hour: 12, minute: 0 }, b.defaults)).toContain('(your default: fire, night)')
+  expect(await run(b, sb, 'reset')).toBe('back to your default: fire, night')
+  expect(b.cfg).toEqual(a.cfg)
+  // An older pi without session entries: one set for every session, in flow.json, as before.
+  const old = new PiSettings(readConfig(undefined), file)
+  await old.open(undefined)
+  await old.change({ style: 'ski' }, undefined)
+  expect(json.style).toBe('ski')
+})
+
+test('sessions: what a session shows that the defaults no longer hold becomes its own; what it set, or shows as the default, stays as it was', () => {
+  const was = readConfig(undefined)
+  const now = readConfig({ style: 'surf', sound: 'on', level: 3 })
+  const shown = withOwn(was, { level: 5 })
+  expect(pinShown(shown, { level: 5 }, now)).toEqual({ own: { level: 5, style: 'fire', sound: 'off' }, pinned: true })
+  expect(pinShown(withOwn(now, { level: 5 }), { level: 5 }, now)).toEqual({ own: { level: 5 }, pinned: false })
 })
 
 test('ski: the skier never drops out of its own cells, even with fast scenery behind it at night', async () => {
