@@ -34,7 +34,7 @@ pi/
   session.ts         pi's settings for a session: flow.json's defaults and the session's own (pure)
   ansi.ts mapping.ts types.ts
 sounds/              the soundscapes' clips (AAC), built by scripts/make-sounds.ts
-scripts/             Node tools, not part of the mod: new-scene, preview, check, sync-manifest, make-sounds
+scripts/             Node tools, not part of the mod: new-scene, preview, check, cvd-check, sync-manifest, make-sounds
 tests/flow.test.ts   unit tests, plus some that need the mod engine
 package.json         the pi package ("pi": { "extensions": ["./pi/index.ts"] }) and the scripts
 ```
@@ -48,7 +48,7 @@ A scene implements `Scene` (`hooks/styles.ts`). Its file exports a `SceneDef` (`
 - **Dials**, set every frame by `SceneDriver.dial()`:
   - `strength` 0–10: 0 draws nothing, every cell blank; 1 is calm idle; 10 is the busiest. Ease changes; never jump.
   - `coverageBoost`: above 0 while subagents run. Add company (more boats, wingmen, a wider fire).
-  - `tint`: `'smoke'` (a failed command or compaction) or `'blue'` (context nearly full). Must be clearly visible in every scene, at every level, in both layouts.
+  - `tint`: `'smoke'` (a failed command or compaction) or `'blue'` (context nearly full). Must be clearly visible in every scene, at every level, in both layouts, and to colour-blind eyes: move lightness or blue-yellow, not only red-green (white to cyan, say, is a change of red alone, and red-green colour blindness can't see it). `npm run cvd` measures it.
   - `night`: for scenes with a night version. Ease a `kNight` toward it rather than switching in one frame. Use `night.ts` so every night matches.
 - **Sound** (`hooks/sound.ts`, see *Soundscapes* below): a scene's bed is layers of clips (`LAYERS`) at gains from the level and its `ambience()`, mixed ahead for each of its moods (`MOODS`); its events (`sounds`, an array the scene pushes `{ kind, v }` onto as things happen on screen, through `hear`, which caps it: an adapter that never takes them, like pi, stays bounded; pi drains them each frame) play a clip (`EVENTS`) or, small and dense ones, a synthesized burst (`VOICES`). A scene without layers is silent.
 - **Sizes**: the band is 5 rows × 80–250 columns, above the prompt. The spine is a pane about 13–22 columns × 30–60 rows. Every scene must look right in both.
@@ -107,6 +107,7 @@ claude plugin test .         # the tests, including those that need the engine
 npm install                  # once, for the scripts below (tsx)
 npm run preview -- <scene>   # print it here: levels 1/5/10, band and spine, day/night, each tint
 npm run check                # plugin.json in step, level 0 blank, colour pairs, timing; exits 1 on a problem
+npm run cvd -- [scene]       # how far apart the tints look to colour-blind eyes (and --sheets DIR for pictures)
 npm run sounds               # rebuild the soundscapes' clips (needs sox and ffmpeg)
 ```
 
@@ -114,3 +115,4 @@ npm run sounds               # rebuild the soundscapes' clips (needs sox and ffm
 - Every file starts with a `// REVISION: flow-vNN-<what>` line; bump it when you change the file. On load the mod logs `[flow] REVISION: …`, the local time and the UTC offset to the debug log (`claude --debug`), so you can tell which version is running.
 - After visual changes, run `npm run preview -- <scene>` (levels 1, 5 and 10 in both layouts, by day and night and with each tint) and look at it.
 - Run `npm run check`: the color-pair count and the timing for each scene.
+- After changing a tint, run `npm run cvd -- <scene>`: for each pair of tints, the CIEDE2000 distance of what the tint changes, seen with normal vision, protanopia, deuteranopia, tritanopia (Machado 2009) and achromatopsia (luminance alone), worst setting first. Under 10 is weak, under 5 can't be told at a glance; it lists what colour blindness loses that normal vision sees, and `--sheets DIR` draws those settings as each vision sees them.
