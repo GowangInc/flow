@@ -201,6 +201,8 @@ type Pal = {
   beam: number
   spill: number
   soot: number
+  haze: number
+  bird: number
   rain: number
 }
 
@@ -265,6 +267,8 @@ const DAY: Pal = {
   beam: 0xfff0b8,
   spill: 0xffd27a,
   soot: 0x1b1b1d,
+  haze: 0x9aa0a8,
+  bird: 0x2c3440,
   rain: 0xc4d4ea,
 }
 
@@ -334,6 +338,8 @@ const NIGHT: Pal = {
   beam: 0xfff0c0,
   spill: 0xffc860,
   soot: 0x5c5d63,
+  haze: 0x30333a,
+  bird: 0x10141c,
   rain: 0x6a7c9c,
 }
 
@@ -365,7 +371,10 @@ const BODY: (keyof Pal)[] = ['cream', 'crimson', 'loco', 'locoVent', 'yellow', '
 const q = (k: number, n: number) => Math.round(clamp(k) * n) / n
 
 type Comp = { off: number; livery: number; leaving: boolean; ph: number }
-type Puff = { s: number; up: number; side: number; r: number; life: number; vu: number; vs: number }
+/** A puff of exhaust: black smoke (a failure), or the faint haze of the diesel idling (`wisp`). */
+type Puff = { s: number; up: number; side: number; r: number; life: number; vu: number; vs: number; wisp: boolean }
+/** Birds crossing the sky (by day, in the band): a few, flapping out of step. */
+type Flock = { x: number; y: number; vx: number; n: number; ph: number }
 type Motor = { x: number; dir: number; v: number; color: number }
 
 /** Cars on the roads (from above). */
@@ -394,6 +403,8 @@ export class Train extends PixelScene {
   private comps: Comp[] = []
   private nextLivery = 0
   private puffs: Puff[] = []
+  private flock: Flock | undefined
+  private nextFlock = 200
   private roads = new Map<number, Motor[]>()
   private rng: number
 
@@ -604,6 +615,31 @@ export class Train extends PixelScene {
     this.moveCompanions(d, dt)
     this.moveSmoke(was, dt)
     if (this.tall) this.moveTraffic(dt)
+    else this.moveBirds(d, dt)
+  }
+
+  /** Now and then by day a few birds cross the band's sky, drifting back as the train runs on. */
+  private moveBirds(d: Dials, dt: number): void {
+    const f = this.flock
+    if (!f) {
+      this.nextFlock -= dt
+      if (this.nextFlock > 0 || d.night > 0.5 || this.kStorm > 0.3) return
+      const dir = this.rand() < 0.5 ? 1 : -1
+      const yHz = this.H - 6
+      this.flock = {
+        x: dir > 0 ? -8 : this.W + 8,
+        y: 1 + this.rand() * Math.max(1, yHz * 2 - 4),
+        vx: dir * (0.22 + this.rand() * 0.18),
+        n: 2 + Math.floor(this.rand() * 4),
+        ph: this.rand() * 8,
+      }
+      return
+    }
+    f.x += (f.vx - this.v * F_MID) * dt
+    if (f.x < -24 || f.x > this.W + 24) {
+      this.flock = undefined
+      this.nextFlock = 250 + this.rand() * 700
+    }
   }
 
   /** The wheels over each rail joint (heard at the listening carriage's end), and the horn before each level crossing. */
@@ -663,7 +699,11 @@ export class Train extends PixelScene {
           life: 1,
           vu: (0.06 + this.rand() * 0.08) / (1 + this.v * 0.5),
           vs: 0.03 + this.rand() * 0.06,
+          wisp: false,
         })
+    } else if (this.v < 1 && this.rand() < 0.12 * dt && this.puffs.length < 40) {
+      // Idling or pulling gently: the faintest haze off the exhaust.
+      this.puffs.push({ s: this.pos - 14.5, up: 0, side: 0, r: 0.6, life: 0.6, vu: 0.08 + this.rand() * 0.05, vs: 0.02, wisp: true })
     }
     let live = 0
     for (const p of this.puffs) {
@@ -953,6 +993,7 @@ export class Train extends PixelScene {
         }
       }
     }
+    this.birds(px, d, P)
     this.smokeSide(px, P, yRoof)
     this.rain(px, d, P)
   }
@@ -1200,6 +1241,26 @@ export class Train extends PixelScene {
     return this.carSide(cb, r, P, livery, mix(livery, 0xffffff, 0.35))
   }
 
+  /** The flock: each bird a 'v' of braille dots, its wings beating out of step with the others'. */
+  private birds(px: Painter, d: Dials, P: Pal): void {
+    const f = this.flock
+    if (!f) return
+    const dir = f.vx > 0 ? 1 : -1
+    for (let k = 0; k < f.n; k++) {
+      const bx = Math.round(f.x - dir * (k * 4 + hash1(k * 7 + 1) * 2))
+      const by = Math.round(f.y + (k % 2) * 2 + hash1(k * 7 + 2) * 1.5)
+      const up = (Math.floor((d.t + k * 5 + f.ph) / 3) & 1) === 1
+      for (const [dx, dy] of [[-1, up ? -1 : 0], [0, 0], [1, up ? -1 : 0]] as const) {
+        const x = bx + dx
+        const y = by + dy
+        if (x < 0 || y < 0 || x >= px.dw || y >= px.dh) continue
+        const c = ((y >> 2) * 2) * px.w + (x & ~1)
+        if (this.solid[c] || this.solid[c + 1]) continue
+        px.dot(x, y, P.bird)
+      }
+    }
+  }
+
   /** Smoke from the exhaust, side-on: dark puffs streaming back and up, thinning into the sky. */
   private smokeSide(px: Painter, P: Pal, yRoof: number): void {
     const W = px.w
@@ -1209,14 +1270,14 @@ export class Train extends PixelScene {
       const cy = yRoof - 0.5 - p.up
       const r = p.r
       const ry = r * 0.5 + 0.3
-      const a = q(p.life * 0.95, 4)
+      const a = q(p.life * (p.wisp ? 0.4 : 0.95), 4)
       if (a <= 0) continue
       for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(px.h - 1, Math.ceil(cy + ry)); y++)
         for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(W - 1, Math.ceil(cx + r)); x++) {
           const dx = (x + 0.5 - cx) / r
           const dy = (y + 0.5 - cy) / ry
           if (dx * dx + dy * dy > 1) continue
-          buf[y * W + x] = mix(buf[y * W + x]!, P.soot, a)
+          buf[y * W + x] = mix(buf[y * W + x]!, p.wisp ? P.haze : P.soot, a)
         }
     }
   }
@@ -1553,14 +1614,14 @@ export class Train extends PixelScene {
       const cy = this.noseY + (this.pos - p.s) / 3
       const r = p.r * (0.8 + p.up * 0.12)
       const ry = r * 0.55
-      const a = q(p.life * 0.95, 4)
+      const a = q(p.life * (p.wisp ? 0.4 : 0.95), 4)
       if (a <= 0) continue
       for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(H - 1, Math.ceil(cy + ry)); y++)
         for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(W - 1, Math.ceil(cx + r)); x++) {
           const dx = (x + 0.5 - cx) / r
           const dy = (y + 0.5 - cy) / ry
           if (dx * dx + dy * dy > 1) continue
-          buf[y * W + x] = mix(buf[y * W + x]!, P.soot, a)
+          buf[y * W + x] = mix(buf[y * W + x]!, p.wisp ? P.haze : P.soot, a)
         }
     }
   }
