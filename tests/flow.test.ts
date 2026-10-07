@@ -1,4 +1,4 @@
-// REVISION: flow-v121-fresh-defaults
+// REVISION: flow-v122-ci
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -751,7 +751,7 @@ test('spine: the pane hides while flow is off, as the band does, and comes back 
     calls.push('close')
     return { value: undefined }
   })
-  on('ui.panes', () => ({ value: [...panes].map(id => ({ id })) }))
+  on('ui.panes', () => ({ value: [...panes].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) }))
   await start($)
   expect(panes.has('flow')).toBe(true)
   expect(await flow($, '0')).toContain('off')
@@ -1438,14 +1438,15 @@ test('subagents running in the background lift the scene even with no turn (e.g.
 
 test('a rocket picked while the level is flying starts in that stage, not on the pad', async () => {
   for (const level of [4, 10]) {
-    const r = new Falcon(3) as unknown as Falcon & { state: string; orbit: number }
+    // state and orbit are private (Falcon & { state } is never): reach them past the class's own type.
+    const r = new Falcon(3) as unknown as Pick<Falcon, 'ensure' | 'strength' | 'step'> & { state: string; orbit: number }
     r.ensure(60, 5)
     r.strength = level
     r.step()
     expect(r.state).toBe('fly')
     expect(r.orbit).toBe(level >= 8 ? 1 : 0) // no launch and race up to orbit
   }
-  const parked = new Falcon(3) as unknown as Falcon & { state: string }
+  const parked = new Falcon(3) as unknown as Pick<Falcon, 'ensure' | 'strength' | 'step'> & { state: string }
   parked.ensure(60, 5)
   parked.strength = 1
   parked.step()
