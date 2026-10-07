@@ -75,7 +75,7 @@ Balloon, falcon, starship, surf and ski also have a **night** version: stars, a 
 |---|---|
 | idle | a low glow (or nothing, if you choose) |
 | in a turn | rises to a level set by effort: `low` 2, default 3, `high` 4, `xhigh` 5, `max` 6 |
-| working a while | one level more for every 30 s the turn has run |
+| working a while | one level more for every 30 s the turn has run (not counting time it waits on you: a permission prompt, a question, a plan to approve) |
 | streaming an answer | keeps going (limited per second, so plain chat sits mid-range) |
 | editing files | pushes higher, scaled by the lines written |
 | running commands | sparks; a slow command keeps it ticking over |
