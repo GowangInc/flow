@@ -1,4 +1,4 @@
-// REVISION: flow-v120-train
+// REVISION: flow-v122-train
 //
 // Builds the soundscapes' clips into sounds/ (AAC, mono 22.05 kHz) and the
 // manifest hooks/sound-files.ts. Each recipe makes a WAV with sox (and Node,
@@ -962,6 +962,6 @@ const files = readdirSync(OUT)
 const sorted = Object.keys(gains).sort()
 writeFileSync(
   join(ROOT, 'hooks', 'sound-files.ts'),
-  `// REVISION: flow-v106-sound-moods\n//\n// Written by scripts/make-sounds.ts: every clip in sounds/, and the gain that\n// puts each mood's mixed bed back to its layers' level (0: silent). Don't edit.\n\nexport const SOUND_FILES: readonly string[] = [\n${files.map(f => `  '${f}',`).join('\n')}\n]\n\nexport const BED_GAINS: Readonly<Record<string, number>> = {\n${sorted.map(k => `  '${k}': ${gains[k]},`).join('\n')}\n}\n`,
+  `// REVISION: flow-v122-train-sounds\n//\n// Written by scripts/make-sounds.ts: every clip in sounds/, and the gain that\n// puts each mood's mixed bed back to its layers' level (0: silent). Don't edit.\n\nexport const SOUND_FILES: readonly string[] = [\n${files.map(f => `  '${f}',`).join('\n')}\n]\n\nexport const BED_GAINS: Readonly<Record<string, number>> = {\n${sorted.map(k => `  '${k}': ${gains[k]},`).join('\n')}\n}\n`,
 )
 console.log(`hooks/sound-files.ts: ${files.length} clips, ${sorted.length} moods`)
