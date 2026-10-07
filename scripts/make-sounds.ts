@@ -1,4 +1,4 @@
-// REVISION: flow-v122-train
+// REVISION: flow-v123-train-faster
 //
 // Builds the soundscapes' clips into sounds/ (AAC, mono 22.05 kHz) and the
 // manifest hooks/sound-files.ts. Each recipe makes a WAV with sox (and Node,
@@ -612,14 +612,14 @@ const RECIPES: Record<string, Record<string, Recipe>> = {
     // a diesel locomotive idling (firing at ~30 Hz, its 3rd harmonic the
     // strongest, over a broadband clatter as loud) and a diesel railcar pulling
     // away (~95 Hz under load, brighter). The bed is the roll, the wind and the
-    // engine; each rail joint's clack and the horn are events.
+    // engine; the horn is an event.
     rumble: {
       variants: 3,
       make: (out, t) => {
         synth(t.tmp('r.wav'), 'synth', SLEN, 'pinknoise', 'lowpass', 1800, 'lowpass', 3000, 'highpass', 90, 'equalizer', 420, '1q', 4, 'bass', -3, 100)
         synth(t.tmp('h.wav'), 'synth', SLEN, 'whitenoise', 'gain', -42, 'highpass', 2500, 'lowpass', 9000)
         fx([t.tmp('r.wav'), t.tmp('h.wav')], t.tmp('m.wav'), 'gain', '-n', -3)
-        // The track's roughness swelling and easing at random (never in a rhythm: the joints' clacks are events).
+        // The track's roughness swelling and easing at random (never in a rhythm).
         turbulence(t.tmp('m.wav'), seedOf(out), [[0.31, 0.16], [1.3, 0.1], [4.1, 0.05]])
         fx([t.tmp('m.wav')], out, 'reverb', 20, 'gain', '-n', -3, ...bedEnd(t))
       },

@@ -1,4 +1,4 @@
-// REVISION: flow-v122-train
+// REVISION: flow-v123-train-faster
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -85,7 +85,6 @@ export type SoundKind =
   | 'crash' // a wave breaking
   | 'lap' // a small wave on a calm sea
   | 'swish' // a ski turn
-  | 'clack' // a train's bogie over a rail joint (v: its speed, 0 crawling to 1 flat out)
   | 'horn' // a train's horn: pulling away, or before a level crossing
 export type SoundEvent = { kind: SoundKind; v: number }
 
@@ -324,7 +323,7 @@ export const LAYERS: Record<string, Layer[]> = {
   train: [
     // The wheels' roll and the wind past it both rising with speed (0 standing); the diesel idling while it
     // waits, working as it runs, flat out at the top (three pitches, crossfading); the open air while it
-    // stands (each rail joint's clack and the horn are events).
+    // stands (the horn is an event).
     { clip: 'train/rumble', variants: BED_TAKES, gain: (s, m) => ((m.amb.wind ?? s) > 0 ? 0.25 + 0.75 * (m.amb.wind ?? s) : 0) },
     { clip: 'train/rush', variants: BED_TAKES, gain: (s, m) => 0.55 * (m.amb.wind ?? s) ** 2 },
     { clip: 'train/air', variants: BED_TAKES, gain: (s, m) => ((m.amb.wind ?? s) > 0 ? 0.05 : 0.18) },
@@ -557,17 +556,6 @@ const VOICES: Record<SoundKind, { len: number; voice: (m: Mix, dt: number, v: nu
   lap: { len: 1.6, voice: (m, dt, v) => m.white() * Math.min(1, dt / 0.6) * decay(dt, 0.5) * (0.15 + 0.2 * v) },
   crash: { len: 1.6, voice: (m, dt, v) => m.white() * Math.min(1, dt / 0.15) * decay(dt, 0.45) * (0.35 + 0.35 * v) },
   swish: { len: 0.35, voice: (m, dt, v) => m.white() * Math.sin(Math.PI * Math.min(1, dt / 0.35)) * (0.15 + 0.25 * v) },
-  clack: {
-    // A rail joint under the carriages' ends: the two bogies' knocks (5 m apart, so the second as far behind as
-    // the speed puts it: a fifth of the way to the next joint), each a dull thud near 250 Hz with a click of
-    // steel on it, gone in a few hundredths of a second (as measured in a carriage over jointed track).
-    len: 0.55,
-    voice: (m, dt, v, x) => {
-      const gap = Math.min(0.45, 0.072 / Math.max(0.1, v))
-      const knock = (t: number) => (t < 0 ? 0 : m.white() * decay(t, 0.0035) * 0.35 + Math.sin(TAU * (230 + 70 * x) * t) * decay(t, 0.022) * 0.6)
-      return (knock(dt) + 0.85 * knock(dt - gap)) * (0.5 + 0.4 * v)
-    },
-  },
   horn: { len: 1.2, voice: (m, dt) => (Math.sin(TAU * 311 * dt) + Math.sin(TAU * 370 * dt) + Math.sin(TAU * 466 * dt)) * Math.min(1, dt / 0.04) * Math.min(1, (1.2 - dt) / 0.1) * 0.15 },
 }
 

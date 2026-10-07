@@ -1,4 +1,4 @@
-// REVISION: flow-v123-train
+// REVISION: flow-v124-train-faster
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -1907,7 +1907,7 @@ test('avalon: each strike is sent ahead of its flash by the player start-up time
   expect(leads.filter(l => Math.abs(l - want) <= 1.5).length).toBeGreaterThan(leads.length * 0.8)
 })
 
-test('train: waits at a red signal at 1; when the work starts the horn sounds and it pulls away; its wheels clack faster the faster it runs; idle again, it pulls up', () => {
+test('train: waits at a red signal at 1; when the work starts the horn sounds and it pulls away; its speed climbs with the level, steeply at the top; idle again, it pulls up', () => {
   const t = makeScene('train', 3) as Train
   const heard = (frames: number, level: number) => {
     t.strength = level
@@ -1924,13 +1924,20 @@ test('train: waits at a red signal at 1; when the work starts the horn sounds an
   expect(t.standing).toBe(true)
   expect(heard(40, 5)).toContain('horn')
   expect(t.standing).toBe(false)
-  // Up to speed, then a minute's clacks at each.
-  heard(400, 3)
-  const slow = heard(800, 3).filter(k => k === 'clack').length
-  heard(400, 9)
-  const fast = heard(800, 9).filter(k => k === 'clack').length
-  expect(slow).toBeGreaterThan(5)
-  expect(fast).toBeGreaterThan(slow * 3)
+  // Each level runs faster than the one below, the top far faster than the middle.
+  const speeds: number[] = []
+  for (const level of [2, 3, 5, 7, 8, 9, 10]) {
+    heard(400, level)
+    speeds.push(t.speed)
+  }
+  for (let i = 1; i < speeds.length; i++) expect(speeds[i]!).toBeGreaterThan(speeds[i - 1]!)
+  expect(speeds.at(-1)!).toBeGreaterThan(speeds[2]! * 5)
+  // From a stand to the top in a sensible time (a train gathers speed; not a minute of it).
+  heard(3000, 1)
+  expect(t.standing).toBe(true)
+  heard(12, 10)
+  heard(170, 10)
+  expect(t.speed).toBeGreaterThan(speeds.at(-1)! * 0.95)
   // The work done, it slows and comes to a stand, and stays there.
   heard(3000, 1)
   expect(t.standing).toBe(true)

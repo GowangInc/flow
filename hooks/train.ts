@@ -1,4 +1,4 @@
-// REVISION: flow-v122-train
+// REVISION: flow-v123-train-faster
 //
 // Train (the `train` scene): a passenger train through the countryside on
 // the same dials as the fire; the level is its speed. At 1 it waits at a red
@@ -6,7 +6,7 @@
 // work starts the signal clears, the horn sounds and it pulls away, and the
 // harder the work the faster it runs: fields, villages, woods, rivers and
 // stations stream past at their depths' paces, the telegraph poles flick by,
-// and the wheels' clickety-clack over the rail joints quickens. When the work
+// and at the top it's a dash, everything near the line a blur. When the work
 // winds down it slows, and pulls up at the next red signal or platform.
 //
 // Subagents run alongside on the next track, a short train each, drawing up
@@ -17,8 +17,9 @@
 // line ahead, and the villages, stations and level crossings are lit.
 //
 // The band is the train side-on from beside the line, the camera keeping
-// pace with it: everything else slides past at its depth's pace (hills
-// barely, the poles in front fastest). The tall spine looks straight down on
+// pace with it: everything else slides past at its depth's pace (the hills
+// barely, then a treeline beyond the fields, the fields, the poles in front
+// fastest, streaking at speed). The tall spine looks straight down on
 // it: the track up the pane, the countryside streaming down past it.
 // Painted as pixels (2 × 2 a cell) by PixelScene, which eases the level and
 // the night, folds the pixels into glyphs and blanks it all at level 0.
@@ -33,14 +34,21 @@ import { hear, leadFrames, PLAYER_LEAD_MS, type Ambience, type SoundEvent } from
 
 /**
  * Speed at each level, in band pixels per 70 ms frame. A band pixel is about
- * 0.77 m (a carriage is 30 of them), so 4.9 is about 190 km/h.
+ * 0.77 m (a carriage is 30 of them): an amble at 1 to 5 (1.6 is about 60 km/h),
+ * then a steep climb into a dash, 9.6 at 10 (about 380 km/h).
  */
-const SPEED = [0, 0.3, 0.55, 0.85, 1.2, 1.6, 2.05, 2.6, 3.25, 4, 4.9]
+const SPEED = [0, 0.3, 0.55, 0.85, 1.2, 1.6, 2.3, 3.4, 5, 7.2, 9.6]
 /** At or below this level it's idle: it pulls up at the next signal or platform and waits there. */
 const IDLE = 1.25
-/** Speeding up, slowing down, and the braking curve into a stop (pixels a frame, a frame). */
+/**
+ * Speeding up and slowing down (pixels a frame, a frame: harder the faster it
+ * goes, so a stand to the top takes about 12 s and the top back to 5 about 6),
+ * and the braking curve into a stop.
+ */
 const ACC = 0.022
 const DEC = 0.035
+const accel = (v: number) => ACC + 0.01 * v
+const decel = (v: number) => DEC + 0.012 * v
 const BRAKE = 0.015
 /** Rolling up to a stop, it holds between these speeds until it brakes. */
 const APPROACH_MIN = 0.6
@@ -63,12 +71,10 @@ const A_LOCO = 12
 const A_CAR = 10
 const A_GAP = 1
 const A_UNIT = A_CAR * 2 + A_GAP
-/** The soundscape listens from the end of this carriage: each rail joint under it clacks (the bogies either side). */
-const LISTEN = 2
 
 // ── The line ─────────────────────────────────────────────────────────────
 
-/** Rail joints (18 m rails): each bogie clacks over them. */
+/** Rail joints (18 m rails), drawn on the rails (they blur at speed). */
 const JOINT = 24
 /** The countryside comes in stretches this long, each fields, a village, woods, a river or a station. */
 const ZONE = 900
@@ -91,13 +97,14 @@ const WATER1 = 500
 /** Block signals, every so far along the line. */
 const SIGNAL = 450
 const SIGNAL0 = 210
-/** The horn sounds this far before a level crossing. */
+/** The horn sounds this far before a level crossing (further at speed). */
 const HORN_AHEAD = 150
 
 /** Depth, as how fast a layer slides past (the track 1). */
 const F_CLOUD = 0.03
 const F_HILLFAR = 0.05
 const F_HILL = 0.1
+const F_TREES = 0.2
 const F_MID = 0.4
 const F_FIELD = 0.7
 const F_STATION = 0.6
@@ -159,6 +166,8 @@ type Pal = {
   tree: number
   treeLit: number
   treeShade: number
+  treeFar: number
+  treeFarLit: number
   floor: number
   wall: number
   roof: number
@@ -225,6 +234,8 @@ const DAY: Pal = {
   tree: 0x2f6e36,
   treeLit: 0x4b8d42,
   treeShade: 0x1f4a26,
+  treeFar: 0x386c52,
+  treeFarLit: 0x4b7f63,
   floor: 0x2a4a26,
   wall: 0xe4d8c2,
   roof: 0xb04e3c,
@@ -296,6 +307,8 @@ const NIGHT: Pal = {
   tree: 0x08100b,
   treeLit: 0x0e1912,
   treeShade: 0x030604,
+  treeFar: 0x091411,
+  treeFarLit: 0x0d1b18,
   floor: 0x060b07,
   wall: 0x24252b,
   roof: 0x241517,
@@ -361,11 +374,69 @@ const RED_OFF = 0x3a1010
 /** The countryside's colours (a storm or smoke washes them); the train's own wash less. */
 const LAND: (keyof Pal)[] = [
   'hillFar', 'hill', 'grass', 'grass2', 'wheat', 'wheat2', 'plough', 'plough2', 'rape', 'sheep', 'hedge', 'tree', 'treeLit',
-  'treeShade', 'floor', 'wall', 'roof', 'roofDark', 'slate', 'water', 'waterHi', 'reed', 'ballast', 'ballast2', 'ballastFar', 'verge',
+  'treeShade', 'treeFar', 'treeFarLit', 'floor', 'wall', 'roof', 'roofDark', 'slate', 'water', 'waterHi', 'reed', 'ballast', 'ballast2', 'ballastFar', 'verge',
   'sleeper', 'rail', 'railFar', 'shadow', 'road', 'platform', 'platformFace', 'platformEdge', 'canopy', 'valance', 'brick',
   'steel', 'pole', 'post',
 ]
 const BODY: (keyof Pal)[] = ['cream', 'crimson', 'loco', 'locoVent', 'yellow', 'carRoof', 'vent', 'grille', 'bogie']
+
+/**
+ * Motion blur along a row of pixels: each the mean of itself and the pixels it
+ * has just come from (to its right: the world runs left), as far as the layer
+ * moved this frame (`run`, pixels; under ~1.5 it's left sharp). Channels are
+ * held to steps of 8, so the streaks add few colours.
+ */
+function smear(buf: Int32Array, W: number, y: number, run: number): void {
+  const n = Math.min(10, Math.round(run * 0.8))
+  if (n < 1) return
+  const o = y * W
+  let r = 0
+  let g = 0
+  let b = 0
+  const at = (x: number) => buf[o + Math.min(W - 1, x)]!
+  for (let x = 0; x <= n; x++) {
+    const c = at(x)
+    r += (c >> 16) & 255
+    g += (c >> 8) & 255
+    b += c & 255
+  }
+  const k = 1 / (n + 1)
+  const out = new Int32Array(W)
+  for (let x = 0; x < W; x++) {
+    out[x] = ((((r * k) >> 3) << 3) << 16) | ((((g * k) >> 3) << 3) << 8) | (((b * k) >> 3) << 3)
+    const c0 = at(x)
+    const c1 = at(x + n + 1)
+    r += ((c1 >> 16) & 255) - ((c0 >> 16) & 255)
+    g += ((c1 >> 8) & 255) - ((c0 >> 8) & 255)
+    b += (c1 & 255) - (c0 & 255)
+  }
+  buf.set(out, o)
+}
+
+/** Motion blur down the columns (from above the world runs down): each pixel the mean of it and the `n` above it, held to steps of 8. */
+function streak(buf: Int32Array, W: number, H: number, n: number): void {
+  const k = 1 / (n + 1)
+  const col = new Int32Array(H)
+  for (let x = 0; x < W; x++) {
+    for (let y = 0; y < H; y++) col[y] = buf[y * W + x]!
+    let r = 0
+    let g = 0
+    let b = 0
+    for (let y = -n; y < H; y++) {
+      const c = col[Math.max(0, y)]!
+      r += (c >> 16) & 255
+      g += (c >> 8) & 255
+      b += c & 255
+      if (y - n - 1 >= -n) {
+        const o = col[Math.max(0, y - n - 1)]!
+        r -= (o >> 16) & 255
+        g -= (o >> 8) & 255
+        b -= o & 255
+      }
+      if (y >= 0) buf[y * W + x] = ((((r * k) >> 3) << 3) << 16) | ((((g * k) >> 3) << 3) << 8) | (((b * k) >> 3) << 3)
+    }
+  }
+}
 
 /** `k` held to steps of 1/n, so a frame holds few distinct colours (Raster paints 1024 pairs). */
 const q = (k: number, n: number) => Math.round(clamp(k) * n) / n
@@ -496,7 +567,7 @@ export class Train extends PixelScene {
    * standing on a level crossing or a bridge, nor part way along a platform.
    */
   private chooseStop(): void {
-    const dmin = (this.v * this.v) / (2 * BRAKE) + 4
+    const dmin = this.stoppingDistance()
     const reach = Math.max(dmin, this.ahead() + 12)
     const platform = this.platformEnd(this.pos + dmin, this.pos + reach + 260)
     if (platform !== undefined) {
@@ -521,6 +592,14 @@ export class Train extends PixelScene {
     this.extras.push(at)
     this.stopAt = at - 3
     this.held = at
+  }
+
+  /** How far it runs from its speed now: slowing to the approach speed, then braking to a stand. */
+  private stoppingDistance(): number {
+    let d = 0
+    for (let u = this.v; u > APPROACH_MAX; u -= decel(u)) d += u
+    const a = Math.min(this.v, APPROACH_MAX)
+    return d + (a * a) / (2 * BRAKE) + 4
   }
 
   /** The stopping place at the far end of a station's platform between a and b, if there is one. */
@@ -599,7 +678,7 @@ export class Train extends PixelScene {
       vT = this.v === 0 ? 0 : Math.min(clamp(this.v, APPROACH_MIN, APPROACH_MAX), Math.sqrt(2 * BRAKE * left))
     }
     const dv = vT - this.v
-    this.v += dv > 0 ? Math.min(dv, ACC * dt) : Math.max(dv, -DEC * dt)
+    this.v += dv > 0 ? Math.min(dv, accel(this.v) * dt) : Math.max(dv, -decel(this.v) * dt)
     this.pos += this.v * dt
     if (idle && this.stopAt !== undefined && (this.pos >= this.stopAt - 0.05 || (this.v < 0.02 && this.stopAt - this.pos < 0.6))) {
       this.pos = this.stopAt
@@ -642,15 +721,14 @@ export class Train extends PixelScene {
     }
   }
 
-  /** The wheels over each rail joint (heard at the listening carriage's end), and the horn before each level crossing. */
+  /** The horn before each level crossing. */
   private listen(was: number): void {
     const now = this.pos
     if (now <= was) return
-    const end = LOCO + GAP + LISTEN * (CAR + GAP) - GAP / 2
-    if (Math.floor((was - end) / JOINT) < Math.floor((now - end) / JOINT)) hear(this.sounds, { kind: 'clack', v: clamp(this.v / SPEED[10]!) })
-    const z = Math.floor((now + HORN_AHEAD - CROSS) / ZONE)
+    const ahead = Math.max(HORN_AHEAD, this.v * 28)
+    const z = Math.floor((now + ahead - CROSS) / ZONE)
     const c = z * ZONE + CROSS
-    if (z !== this.horned && crosses(zoneOf(z)) && was < c - HORN_AHEAD && now >= c - HORN_AHEAD && this.v > 0.3) {
+    if (z !== this.horned && crosses(zoneOf(z)) && now < c && this.v > 0.3) {
       this.horned = z
       hear(this.sounds, { kind: 'horn', v: 1 })
     }
@@ -690,7 +768,7 @@ export class Train extends PixelScene {
       // plume, not a string of beads), kept low by the rush of air at speed.
       const run = this.pos - was
       const n = Math.ceil((3 + run * 0.8) * dt)
-      for (let i = 0; i < n && this.puffs.length < 260; i++)
+      for (let i = 0; i < n; i++)
         this.puffs.push({
           s: was + run * this.rand() - 14.5 + this.rand() * 1.5,
           up: 0,
@@ -718,6 +796,7 @@ export class Train extends PixelScene {
       if (p.life > 0) this.puffs[live++] = p
     }
     this.puffs.length = live
+    if (live > 300) this.puffs.splice(0, live - 300)
   }
 
   /** From above: cars on the roads in view, held at the barriers while a train's near. */
@@ -872,6 +951,22 @@ export class Train extends PixelScene {
           if (k > 0) buf[y * W + x] = mix(buf[y * W + x]!, MOON, q(k * kn, 4))
         }
     }
+    // A treeline beyond the fields, between the hills and the far fields (sliding past at a fifth of the
+    // train's pace): clumps, gaps and lone trees, thick by the woods; hazier and bluer than the trees nearer by.
+    if (yHz >= 1) {
+      for (let x = 0; x < W; x++) {
+        const u = at(F_TREES, x)
+        const zone = zoneOf(Math.floor(u / F_TREES / ZONE))
+        const thin = zone === WOODS ? 0.12 : zone === FIELDS ? 0.42 : 0.5
+        // Crowns three pixels across, the taller ones rounded: a bumpy line, not a hedge.
+        const j = Math.floor(u / 3)
+        const c = u - j * 3
+        const lone = hash1(j * 31 + 7) < 0.1
+        if (noise1(u * 0.07, 61) < thin && !lone) continue
+        const tall = 1 + (c === 1 && hash1(j * 17 + 3) < (zone === WOODS ? 0.8 : 0.55) ? 1 : 0) + (c === 1 && zone === WOODS && hash1(j * 13 + 5) < 0.2 ? 1 : 0)
+        for (let dy = 0; dy < tall && yHz - 1 - dy >= 0; dy++) buf[(yHz - 1 - dy) * W + x] = dy === tall - 1 && tall > 1 ? P.treeFarLit : P.treeFar
+      }
+    }
     // Stars, in what's left of the sky.
     if (kn > 0.3) {
       const n = Math.round(W * 0.06 * kn)
@@ -901,6 +996,9 @@ export class Train extends PixelScene {
         this.farThings(px, x, u, yHz, P, kn)
       }
     }
+    const [, moonY] = moonPixel(d.columns, d.rows)
+    for (let y = Math.max(0, yHz - 3); y <= yHz; y++)
+      if (kn === 0 || Math.abs(y + 0.5 - moonY) > moonRadius(false) * 0.5 + 0.5) smear(buf, W, y, F_MID * this.v * 0.6)
     // The nearer fields (seen past the train's ends), and the station's far platform.
     if (yRoof >= 0) {
       for (let x = 0; x < W; x++) {
@@ -923,6 +1021,9 @@ export class Train extends PixelScene {
     // The station's building and the canopy over the far platform (behind both tracks).
     this.stationBehind(px, d, P, yHz, at)
     // The far track's rail, and the verge between the tracks; a road crossing them; the bridge's deck.
+    // (At speed the joints and the grit fade into a blur: drawn sharp, they'd strobe.)
+    const farGrit = clamp(1 - (this.v * F_FAR - 2) / 3)
+    const farJoint = mix(P.railFar, P.ballastFar, q(farGrit, 3))
     for (let x = 0; x < W; x++) {
       const S = at(F_FAR, x) / F_FAR
       const z = Math.floor(S / ZONE)
@@ -930,11 +1031,13 @@ export class Train extends PixelScene {
       const local = S - z * ZONE
       const road = crosses(zone) && Math.abs(local - CROSS) < ROAD
       const bridge = zone === RIVER && local > BRIDGE0 && local < BRIDGE1
-      if (yWin >= 0) buf[yWin * W + x] = Math.floor(S) % JOINT === 0 ? (road ? P.road : bridge ? P.steel : P.ballastFar) : P.railFar
-      if (yLow >= 0) buf[yLow * W + x] = road ? P.road : bridge ? P.steel : hash1(Math.floor(S) * 5 + 3) < 0.3 ? P.ballastFar : P.verge
+      if (yWin >= 0) buf[yWin * W + x] = Math.floor(S) % JOINT === 0 ? (road ? P.road : bridge ? P.steel : farJoint) : P.railFar
+      if (yLow >= 0) buf[yLow * W + x] = road ? P.road : bridge ? P.steel : hash1(Math.floor(S) * 5 + 3) < 0.3 * farGrit ? P.ballastFar : P.verge
     }
     // The near track: ballast and the sleepers' ends (a blur at speed; the bridge's deck over the river), and the rail, its joints going by.
     const sleeper = mix(P.sleeper, P.ballast, q((this.v - 0.6) / 0.8, 3))
+    const grit = clamp(1 - (this.v - 2) / 3)
+    const joint = mix(P.rail, P.ballast, q(grit, 3))
     for (let x = 0; x < W; x++) {
       const S = nose + x - nx + 1
       const Si = Math.floor(S)
@@ -943,9 +1046,14 @@ export class Train extends PixelScene {
       const local = S - z * ZONE
       const road = crosses(zone) && Math.abs(local - CROSS) < ROAD
       const bridge = zone === RIVER && local > BRIDGE0 && local < BRIDGE1
-      if (yBog >= 0) buf[yBog * W + x] = road ? P.road : bridge ? P.steel : Si % 3 === 0 ? sleeper : hash1(Si * 7 + 11) < 0.35 ? P.ballast2 : P.ballast
-      buf[B * W + x] = Si % JOINT === 0 && !road ? (bridge ? P.steel : P.ballast) : P.rail
+      if (yBog >= 0) buf[yBog * W + x] = road ? P.road : bridge ? P.steel : Si % 3 === 0 ? sleeper : hash1(Si * 7 + 11) < 0.35 * grit ? P.ballast2 : P.ballast
+      buf[B * W + x] = Si % JOINT === 0 && !road ? (bridge ? P.steel : joint) : P.rail
     }
+    // Everything near the line streaks at speed, each row as far as its depth runs in a frame.
+    if (yRoof >= 0) smear(buf, W, yRoof, F_FIELD * this.v)
+    if (yWin >= 0) smear(buf, W, yWin, F_FAR * this.v)
+    if (yLow >= 0) smear(buf, W, yLow, F_FAR * this.v)
+    if (yBog >= 0) smear(buf, W, yBog, this.v)
 
     // The companions on the far track, then the train itself.
     for (const c of this.comps) {
@@ -1165,10 +1273,14 @@ export class Train extends PixelScene {
           const top = Math.max(0, B - 6)
           const p = ((ut % 16) + 16) % 16
           const yd = top + Math.round((B - top) * (p < 8 ? p / 8 : (16 - p) / 8))
+          const k = clamp((this.v * F_TRUSS - 3) / 4)
+          const a = q(1 - 0.65 * k, 4)
+          const haze = q(0.3 * k, 4)
           buf[top * W + x] = P.steel
           buf[B * W + x] = P.steel
-          if (yd >= 0 && yd <= B) buf[yd * W + x] = P.steel
-          if (p === 0) for (let y = top; y <= B; y++) buf[y * W + x] = P.steel
+          if (haze > 0) for (let y = top + 1; y < B; y++) buf[y * W + x] = mix(buf[y * W + x]!, P.steel, haze)
+          if (yd > top && yd < B) buf[yd * W + x] = mix(buf[yd * W + x]!, P.steel, a)
+          if (p === 0) for (let y = top + 1; y < B; y++) buf[y * W + x] = mix(buf[y * W + x]!, P.steel, a)
         }
       }
     }
@@ -1192,7 +1304,7 @@ export class Train extends PixelScene {
       const zone = zoneOf(z)
       const local = S - z * ZONE
       if ((zone === STATION && local > PLAT0 - 40 && local < PLAT1 + 40) || (zone === RIVER && local > BRIDGE0 - 20 && local < BRIDGE1 + 20)) continue
-      const a = q(1 / blur, 4)
+      const a = q(Math.max(0.25, 1.2 / blur), 4)
       for (let y = Math.max(0, B - 8); y <= B; y++) buf[y * W + x] = mix(buf[y * W + x]!, P.pole, a)
       if (B - 8 >= 0 && blur < 2) {
         if (x > 0) buf[(B - 8) * W + x - 1] = P.pole
@@ -1323,8 +1435,10 @@ export class Train extends PixelScene {
     const kn = q(d.night, 8)
     const light = this.lights(d)
     const t = d.t
-    // Sleepers blur into the ballast at speed (rather than strobe).
+    // Sleepers blur into the ballast at speed (rather than strobe), and so, faster, do the joints and the fields' rows.
     const sleeper = mix(P.sleeper, P.ballast, q((this.v / 3 - 0.3) / 0.5, 4))
+    const still = 1 - q((this.v / 3 - 0.8) / 1.5, 2)
+    const joint = mix(P.rail, P.ballast, 0.5 * still)
     const rowV = this.rowV
     for (let y = 0; y < H; y++) rowV[y] = av + ny - y
 
@@ -1347,7 +1461,7 @@ export class Train extends PixelScene {
           // Two tracks: sleepers and rails on ballast (a bridge's deck over the river, a road across).
           const rail = dx === -2 || dx === 1 || dx === 5 || dx === 8
           if (road) c = rail ? P.rail : P.road
-          else if (rail) c = v % 8 === 0 ? mix(P.rail, P.ballast, 0.5) : P.rail
+          else if (rail) c = v % 8 === 0 ? joint : P.rail
           else if (dx !== 3 && (v & 1) === 0) c = bridge ? mix(sleeper, P.steel, 0.5) : sleeper
           else c = bridge ? P.steel : hash(x, v, 5) < 0.3 ? P.ballast2 : P.ballast
           if (bridge && (dx === -3 || dx === 9)) c = P.post
@@ -1359,7 +1473,7 @@ export class Train extends PixelScene {
         } else if (road) {
           c = P.road
           if (kn > 0.3 && Math.floor(local - CROSS + ROAD) === 0 && x % 10 === 3) c = P.spill
-        } else c = this.groundAbove(x, v, zone, local, P, t)
+        } else c = this.groundAbove(x, v, zone, local, P, t, still)
         buf[row + x] = c
       }
     }
@@ -1396,6 +1510,9 @@ export class Train extends PixelScene {
         px.set(x0 + 1, yy, c.dir > 0 ? mix(body, 0xfff6d8, 0.7 * light) : mix(body, 0xff3020, 0.6 * light), true)
       }
     }
+    // At speed the countryside streaks down past (the trains, keeping pace with the eye, stay sharp).
+    const run = Math.min(3, Math.round((this.v / 3) * 0.7))
+    if (run >= 1) streak(buf, W, H, run)
     // The companions on the right-hand track, then the train.
     for (const c of this.comps) {
       const top = ny - Math.round(c.off / 3)
@@ -1451,13 +1568,13 @@ export class Train extends PixelScene {
   }
 
   /** A pixel of the countryside from above: a river and its reeds, woods, gardens, or a patchwork of hedged fields. */
-  private groundAbove(x: number, v: number, zone: number, local: number, P: Pal, t: number): number {
+  private groundAbove(x: number, v: number, zone: number, local: number, P: Pal, t: number, still: number): number {
     if (zone === RIVER) {
       const l = local + 9 * Math.sin(x * 0.13 + v * 0.002) + 4 * Math.sin(x * 0.31 + 1.7)
-      if (l > WATER0 && l < WATER1) return hash(x, v + (t >> 3), 9) < 0.06 ? P.waterHi : P.water
+      if (l > WATER0 && l < WATER1) return hash(x, v + (t >> 3), 9) < 0.06 * still ? P.waterHi : P.water
       if (l > WATER0 - 8 && l < WATER1 + 8) return hash(x, v, 10) < 0.5 ? P.reed : P.grass2
     }
-    if (zone === WOODS) return hash(x, v, 11) < 0.3 ? P.treeShade : P.floor
+    if (zone === WOODS) return hash(x, v, 11) < 0.3 * still ? P.treeShade : P.floor
     if ((zone === VILLAGE || zone === STATION) && Math.abs(x - this.tx - 3) > 12) {
       // Gardens, some hedged, some not; a vegetable patch here and there.
       const gv = Math.floor(v / 4)
@@ -1476,11 +1593,11 @@ export class Train extends PixelScene {
     const xs = lo + Math.round((hi - lo) * (0.25 + 0.5 * hash(fr, side, 13)))
     if (vv - fr * FH === 0 || x === xs) return hash(x, v, 14) < 0.12 ? P.grass2 : P.hedge
     const kind = hash(fr * 2 + (x < xs ? 0 : 1), side, 15)
-    if (kind < 0.3) return hash(x, v, 16) < 0.15 ? P.grass2 : P.grass
-    if (kind < 0.45) return hash(x, v, 17) < 0.02 ? P.sheep : P.grass2
+    if (kind < 0.3) return hash(x, v, 16) < 0.15 * still ? P.grass2 : P.grass
+    if (kind < 0.45) return hash(x, v, 17) < 0.02 * still ? P.sheep : P.grass2
     if (kind < 0.65) return (x & 1) === 0 ? P.wheat : P.wheat2
-    if (kind < 0.84) return (v & 1) === 0 ? P.plough : P.plough2
-    if (kind < 0.9) return hash(x, v, 18) < 0.12 ? P.wheat : P.rape
+    if (kind < 0.84) return still < 1 ? mix(P.plough, P.plough2, 0.5) : (v & 1) === 0 ? P.plough : P.plough2
+    if (kind < 0.9) return hash(x, v, 18) < 0.12 * still ? P.wheat : P.rape
     return P.grass
   }
 
