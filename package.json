@@ -24,6 +24,7 @@
     "preview": "tsx scripts/preview.ts",
     "check": "tsx scripts/check.ts",
     "typecheck": "tsc -p . && tsc -p tsconfig.node.json",
+    "cvd": "tsx scripts/cvd-check.ts",
     "sync": "tsx scripts/sync-manifest.ts",
     "sounds": "tsx scripts/make-sounds.ts"
   },

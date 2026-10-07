@@ -1,4 +1,4 @@
-// REVISION: flow-v122-train
+// REVISION: flow-v127-quiet-exit
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -10,7 +10,8 @@
 //
 // Auto mode (the default) moves with the work Claude is doing: idle it sits
 // at a low glow (or dark); a turn lifts it by effort, streamed output keeps
-// it going, edits push it by lines written, commands spark, subagents add to
+// it going, edits push it by lines written, commands spark, reads and any
+// other tool (an MCP server's) spark a little, subagents add to
 // the scene and stoke it, a failed command or a compaction shows as smoke,
 // and a nearly-full context as blue (each scene shows these its own way).
 //
@@ -24,8 +25,10 @@
 // in /config itself is a default, and shows in that session at once. The
 // defaults are read afresh before anything compares with them (another
 // session may have saved since): a running session keeps what it shows, and
-// `/flow save` saves exactly that. `/flow help` lists the command's forms
-// (see settings.ts, sessions.ts).
+// `/flow save` saves exactly that. Only a scene's own name is ever written
+// to /config; a row left holding one Flow no longer takes (a scene since
+// renamed or dropped) is written back as the one it stands for. `/flow help`
+// lists the command's forms (see settings.ts, sessions.ts).
 
 import { atom, update } from 'claude-code'
 import type { CommandRunInput, CommandRunResult, EngineInterface, Register } from 'claude-code'
@@ -36,6 +39,7 @@ import { FRAME_MS, SceneDriver } from './scene'
 import {
   changedText,
   changesFor,
+  firstTips,
   helpText,
   ownHint,
   parseFlowArgs,
@@ -47,7 +51,11 @@ import {
   type FlowConfig,
   type FlowLayout,
   nextTip,
+  noteTips,
   readTips,
+  staleRows,
+  type StaleRow,
+  type StoredRow,
 } from './settings'
 import {
   differences,
@@ -69,7 +77,7 @@ import { frameSvg } from './svg'
 import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent } from './sound'
 
 
-const FLOW_REVISION = 'flow-v122-train'
+const FLOW_REVISION = 'flow-v127-quiet-exit'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -154,6 +162,37 @@ async function saveConfig($: EngineInterface, changes: Partial<FlowConfig>): Pro
     }
   }
   return refused
+}
+
+/** The /config rows, each with its value as stored (none where the host can't list them). */
+async function storedRows($: EngineInterface): Promise<readonly StoredRow[]> {
+  try {
+    return await $.config.list()
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Write rows left holding a value Flow no longer takes (see staleRows) back
+ * as the one they stand for. This load already reads them so (readDefaults:
+ * readConfig), but Claude Code reads such a row as its default before Flow
+ * runs and says so at every load: in the debug log, or the transcript while
+ * a plugin folder hot-reloads. Nothing here can stop that once; written back,
+ * it stops. Noted in the debug log alone. A refused write (a row the
+ * organization or `--settings` owns) changes nothing here.
+ */
+async function repairRows($: EngineInterface, stale: readonly StaleRow[]): Promise<void> {
+  for (const row of stale) {
+    // (Said first: the write reloads the module, which may cut this short.)
+    $.ui.log(`[flow] /config ${row.key} held "${row.from}", none of its options: writing it as ${row.to}`, { to: 'debug' })
+    try {
+      const { deny } = await $.config.set({ key: row.key, value: row.to })
+      if (deny) $.ui.log(`[flow] /config ${row.key} not written (${deny}): read as ${row.to} all the same`, { to: 'debug' })
+    } catch {
+      // No such row to write: read as meant all the same.
+    }
+  }
 }
 
 /**
@@ -428,11 +467,32 @@ async function resetSession($: EngineInterface, ctx: SceneCtx): Promise<string> 
 
 const TIPS = 'tips'
 
-/** A chance for a one-time tip (see nextTip), the store keeping which have been given: the tip, if one's due. */
-async function takeTip($: EngineInterface, cfg: FlowConfig): Promise<string | undefined> {
+/**
+ * Start keeping tips, where none are kept yet (see firstTips): from a
+ * session's start, before its `/flow` stores anything, so anything else in
+ * the store (a session's own settings, old overrides, the older settings,
+ * whatever Flow keeps there next) is from before, as is a `usedBefore` the
+ * caller saw. Tips are the person's, not a session's: one record for all.
+ */
+async function seedTips($: EngineInterface, usedBefore: boolean, settings: FlowConfig): Promise<void> {
+  try {
+    const keys = await $.store.keys()
+    if (!keys.includes(TIPS)) await $.store.set(TIPS, firstTips(usedBefore || keys.length > 0, settings))
+  } catch {
+    // Unread: the tips start from nothing, as for someone new.
+  }
+}
+
+/**
+ * A chance for a one-time tip (see nextTip), the store keeping which have been
+ * given: the tip, if one's due. `noteOnly`: no chance (no prompt to toast
+ * over), but what's on is noted all the same (see noteTips): the sound turned
+ * on in /config in such a session, and off again later, still counts as tried.
+ */
+async function takeTip($: EngineInterface, cfg: FlowConfig, noteOnly = false): Promise<string | undefined> {
   try {
     const before = readTips(await $.store.get(TIPS))
-    const { tip, tips } = nextTip(before, cfg)
+    const { tip, tips } = noteOnly ? { tip: undefined, tips: noteTips(before, cfg) } : nextTip(before, cfg)
     if (JSON.stringify(tips) !== JSON.stringify(before)) await $.store.set(TIPS, tips)
     return tip
   } catch {
@@ -515,6 +575,11 @@ export const register: Register = (on, options) => {
     events: [] as AbortController[],
     seed: 1,
     scene: '',
+    /**
+     * The session has ended for good (Claude Code quitting): the frames still running till the process goes
+     * start nothing, as a clip begun then outlives it and plays out in full.
+     */
+    over: false,
   }
   /**
    * Whether what was scheduled in generation `gen` may still play: the soundscape hasn't stopped since, and
@@ -595,6 +660,16 @@ export const register: Register = (on, options) => {
       argumentHint: '[<scene> | next | day | night | clock | auto | 1-10 | off | band | spine | save | reset | help]',
     })
 
+    // What's left of Flow from before this load, read before anything below writes: /config's rows as stored,
+    // the balloon's altitude (this session's), the store (seedTips). Someone new starts on the tips; someone
+    // who had Flow before they were kept is taken as having had them.
+    const stale = staleRows(await storedRows($), PLUGIN)
+    const altitude = await savedAltitude($)
+    await seedTips($, stale.length > 0 || altitude > 0, readConfig(options))
+
+    // /config rows holding a scene Flow no longer takes (renamed, dropped), written back as the one meant.
+    await repairRows($, stale)
+
     // One-time move of settings kept in $.store before they were userConfig.
     const legacy: Partial<FlowConfig> = {}
     const old = Object.fromEntries(await Promise.all(LEGACY_KEYS.map(async k => [k, await $.store.get(k)] as const)))
@@ -623,17 +698,14 @@ export const register: Register = (on, options) => {
     void pruneSessions($, session.id)
 
     // Resume the balloon where the last load left it.
-    const altitude = await savedAltitude($)
     for (const d of [driver, desktopDriver]) {
       const balloon = d.sceneFor('balloon')
       if (balloon instanceof Balloon) balloon.seed(altitude)
     }
 
-    // A one-time tip, the settings now in: the other scenes, or the sound.
-    if (e.isInteractive) {
-      const tip = await takeTip($, cfg)
-      if (tip) $.ui.toast(tip, { timeoutMs: 12_000 })
-    }
+    // A one-time tip, the settings now in: the other scenes, or the sound. With no prompt to toast over, what's on is noted.
+    const tip = await takeTip($, cfg, !e.isInteractive)
+    if (tip) $.ui.toast(tip, { timeoutMs: 12_000 })
 
     // The frame loop: its own pace, rescheduled each tick.
     let wasShown = driver.isShown()
@@ -646,7 +718,7 @@ export const register: Register = (on, options) => {
       // The soundscape, while the scene is on screen: beds crossfading one
       // into the next, and what happens on screen heard as it happens.
       sound.clock += elapsed
-      const heard = cfg.sound === 'on' && (site || desk) && driver.isShown()
+      const heard = !sound.over && cfg.sound === 'on' && (site || desk) && driver.isShown()
       const shownScene = site ? driver.scene : desk ? desktopDriver.scene : undefined
       const events: SoundEvent[] = []
       for (const sc of [driver.scene, desktopDriver.scene]) {
@@ -883,6 +955,8 @@ export const register: Register = (on, options) => {
     else if (e.tool === 'Bash') activity.ranCommand(isSubagent)
     else if (e.tool === 'Agent') activity.spawnedAgent()
     else if (READ_TOOLS.has(e.tool)) activity.read(isSubagent)
+    // Any other (an MCP server's `mcp__…`, a tool added since) is work too; a question or a plan put to the person isn't.
+    else if (!PERSON_TOOLS.has(e.tool)) activity.usedTool(isSubagent)
 
     activity.toolsInFlight++
     const id = e.tool_use_id
@@ -924,8 +998,10 @@ export const register: Register = (on, options) => {
   on('command.run', { command: COMMAND }, ($, e) => runScene($, e, sceneCtx))
 
   on('session.end', async ($, e, next) => {
-    // The soundscape stops with the session. Its settings were kept as they
-    // changed: nothing is written to /config (only `/flow save` does that).
+    // The soundscape stops with the session, for good unless the process goes
+    // on (a /clear, a resume). Its settings were kept as they changed: nothing
+    // is written to /config (only `/flow save` does that).
+    if (e.reason !== 'clear' && e.reason !== 'resume') sound.over = true
     stopSound()
     // The defaults may have changed since the last look (another session's
     // save): what this one showed is kept for a resume.

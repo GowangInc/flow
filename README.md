@@ -82,6 +82,7 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 | streaming an answer | keeps going (limited per second, so plain chat sits mid-range) |
 | editing files | pushes higher, scaled by the lines written |
 | running commands | sparks; a slow command keeps it ticking over |
+| reading or searching, or using any other tool (an MCP server's too) | a small spark each |
 | running subagents | busier with each one (with diminishing returns); some scenes add company: more balloons, surfers or skiers, a wider fire, more lights on the launch tower, trains running alongside |
 | hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey, black smoke pouring from the train's diesel |
 | near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train |
@@ -133,7 +134,7 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 | `agent_start` / `agent_end` | a turn lifts it (a level more for every 30 s it runs), then it settles to idle |
 | `turn_start` | rises to the floor for `ctx.thinkingLevel` (`minimal`/`low` 2 … `max` 6) |
 | `message_update` deltas | streamed text and thinking keep it going |
-| `tool_call` | `write`/`edit` push it by lines written, `bash` sparks, reads flicker |
+| `tool_call` | `write`/`edit` push it by lines written, `bash` sparks, reads and other tools flicker |
 | `tool_result` with `isError` | a failed command shows as smoke |
 | `session_compact` | so does a compaction |
 | `ctx.getContextUsage()` | a nearly-full context shows as blue |

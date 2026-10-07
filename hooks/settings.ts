@@ -1,4 +1,4 @@
-// REVISION: flow-v120-per-session
+// REVISION: flow-v125-note-tips
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -74,6 +74,31 @@ export function readConfig(options: Readonly<Record<string, unknown>> | undefine
 export function storedValue(field: keyof FlowConfig, value: FlowConfig[keyof FlowConfig]): string | number {
   if (field === 'idle') return value === 0 ? 'dark' : 'glow'
   return value
+}
+
+/** A /config row as `$.config.list()` reads it: its key, the value as stored, the values it takes. */
+export type StoredRow = { key: string; value: unknown; options?: readonly string[] }
+/** A row to write back: the value stored, and the one it stands for now. */
+export type StaleRow = { key: string; field: keyof FlowConfig; from: string; to: string | number }
+
+/**
+ * Flow's rows (`<plugin>.<field>`) holding a value none of their options are:
+ * a scene since renamed (`colony`, now `avalon`) or dropped (`river`, `lava`),
+ * an alias, idle's old `pilot`. Claude Code reads such a value as the row's
+ * default before Flow loads, and says so at every load; each comes back with
+ * what it stands for now (the default, for a scene that's gone), to write back.
+ */
+export function staleRows(rows: readonly StoredRow[], plugin: string): StaleRow[] {
+  const fields = Object.keys(readConfig(undefined)) as (keyof FlowConfig)[]
+  const stale: StaleRow[] = []
+  for (const row of rows) {
+    const field = fields.find(f => row.key === `${plugin}.${f}`)
+    const { value, options } = row
+    if (!field || !options || typeof value !== 'string' || options.includes(value)) continue
+    const to = storedValue(field, readConfig({ [field]: value })[field])
+    if (options.includes(String(to))) stale.push({ key: row.key, field, from: value, to })
+  }
+  return stale
 }
 
 export type FlowCommand =
@@ -368,6 +393,29 @@ export function readTips(v: unknown): Tips {
   return t
 }
 
+/** What the settings show has been on (another scene, the sound), noted for the tips. */
+export function noteTips(tips: Tips, cfg: FlowConfig): Tips {
+  const t: Tips = { ...tips }
+  if (cfg.style !== 'fire') t.otherScene = true
+  if (cfg.sound === 'on') t.triedSound = true
+  return t
+}
+
+/**
+ * The tips' first record, for someone with none (kept from a session's start,
+ * before its own `/flow` can store anything). Someone new has been told
+ * nothing. Someone who had Flow before tips were kept (`usedBefore`: other
+ * state of Flow's already kept, a /config row from an older Flow) or has
+ * changed a default (`settings`: the /config rows) has been told both: they
+ * may well have found the other scenes and the sound already, and been
+ * through them.
+ */
+export function firstTips(usedBefore: boolean, settings: FlowConfig): Tips {
+  const defaults = readConfig(undefined)
+  const changed = (Object.keys(defaults) as (keyof FlowConfig)[]).some(k => settings[k] !== defaults[k])
+  return usedBefore || changed ? { scenesTold: true, soundTold: true } : {}
+}
+
 /**
  * A chance to give a tip (a `/flow` just run, or a session starting), with the
  * settings as they now are: the tip to give, if any, and the tips to keep.
@@ -375,9 +423,7 @@ export function readTips(v: unknown): Tips {
  * been on; then, three chances on, the sound, if it has never been on.
  */
 export function nextTip(tips: Tips, cfg: FlowConfig): { tip?: string; tips: Tips } {
-  const t: Tips = { ...tips }
-  if (cfg.style !== 'fire') t.otherScene = true
-  if (cfg.sound === 'on') t.triedSound = true
+  const t = noteTips(tips, cfg)
   if (!t.scenesTold) {
     t.scenesTold = true
     t.since = 0

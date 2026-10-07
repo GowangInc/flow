@@ -1,4 +1,4 @@
-// REVISION: flow-v82-aliases
+// REVISION: flow-v120-cvd-blue
 //
 // Warp (the `warp` style): a starfield on the same dials as the fire, the
 // level is the ship's speed.
@@ -7,7 +7,7 @@
 // braille sub-pixel grid (2×4 dots a cell). At rest the field drifts and
 // twinkles; from level 6 every star draws a streak back along its path, so
 // by 10 the band is hyperspace. Subagents (the coverage boost) add stars;
-// smoke dims the field to gray, a nearly-full context tints it cyan.
+// smoke dims the field to gray, a nearly-full context turns it deep blue.
 
 import { Cells, Rng } from './cells'
 import { BRAILLE } from './pixels'
@@ -35,8 +35,12 @@ function starColor(b: number, tint: Tint, warp: number): number {
   let g = 80 + v * 175
   let bl = 120 + v * 135
   if (tint === 'blue') {
-    r *= 0.55
-    g = Math.min(255, g * 1.05)
+    // Deep blue, not cyan: cyan parts from white only in its red, which
+    // red-green colour blindness can't see. This loses green and light too,
+    // and stays darker than smoke's gray (luminance alone tells them apart).
+    r = 12 + v * 30
+    g = 32 + v * 74
+    bl = 140 + v * 100
   }
   r -= warp * 40 * (1 - v)
   g -= warp * 15 * (1 - v)

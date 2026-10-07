@@ -1,4 +1,4 @@
-// REVISION: flow-v106-held
+// REVISION: flow-v120-cvd-blue
 //
 // A colony ship on the same dials as the fire: the level is its speed. A
 // long ship like the Avalon holds steady (nose to the right in the band,
@@ -17,7 +17,7 @@
 // burns long and impacts keep the shield lit. Subagents light more of the
 // habitat windows; smoke dims the engine to gray, coughs puffs out behind
 // it, and leaves the shield flickering weakly; a nearly-full context turns
-// the shield and the stars a deep, hard-glowing cyan.
+// the shield a hard-glowing cyan and the stars a deep blue.
 //
 // Everything is placed in a flight frame (a = along the direction of
 // travel, c = across it, both in braille dots: square, two a cell across and
@@ -65,7 +65,8 @@ const C = {
   rock: [0xa8a091, 0xc4baa9, 0xe0d7c6] as const, // small, medium, big
   hot: 0xff9a50,
   star: [0x6a7488, 0xa8b2c4, 0xeef2fa] as const,
-  cyan: [0x2a7ea0, 0x40b8dc, 0xb0f0ff] as const,
+  /** The stars under the blue tint: deep blue, not cyan (red-green colour blindness sees cyan as their own blue-gray). */
+  starBlue: [0x1c4f9c, 0x2d7fe0, 0x86c4ff] as const,
 }
 
 /** Rock radii in dots, smallest first. */
@@ -360,7 +361,7 @@ export class Colony {
   }
 
   private starColor(layer: number, fade: number): number {
-    const ramp = this.tint === 'blue' ? C.cyan : C.star
+    const ramp = this.tint === 'blue' ? C.starBlue : C.star
     const base = ramp[layer]!
     const k = Math.max(0.15, Math.min(1, fade))
     const ch = (sh: number) => Math.round(((base >> sh) & 255) * k)

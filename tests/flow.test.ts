@@ -1,11 +1,11 @@
-// REVISION: flow-v124-train-faster
+// REVISION: flow-v129-quiet-exit
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten } from '../hooks/activity'
-import { nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, statusText } from '../hooks/settings'
+import { firstTips, nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
 import { effortOf, ownInSession, piLinesWritten } from '../pi/mapping'
@@ -51,6 +51,8 @@ type Captured = {
   invalidates?: number
   plays?: string[]
   toasts?: string[]
+  /** What `$.ui.log` was given, and where to. */
+  logs?: { text: string; to?: string }[]
   /** The session's id, as `$.session.id()` answers it (change it to move the process to another session). */
   session?: string
   /**
@@ -88,7 +90,10 @@ function engine(
     return Text({ children: 'engine band' })
   })
   on('session.start', () => ({ cwd: '/tmp' }))
-  on('ui.log', () => ({ value: undefined }))
+  on('ui.log', (_, e) => {
+    ;(captured.logs ??= []).push({ text: e.text, to: e.to })
+    return { value: undefined }
+  })
   on('ui.toast', (_, e) => {
     ;(captured.toasts ??= []).push((e as { text: string }).text)
     return { value: undefined }
@@ -313,6 +318,52 @@ test('calibration: a swarm of reading subagents stays below 10; editing ones rea
     for (let a = 0; a < 4; a++) if (tickOf(t + a * 0.5, 3)) h.edited(30, true)
   })
   expect(editors.max).toBe(10)
+})
+
+test('calibration: any other tool (MCP) sparks as a read does: above a quiet turn, below an edit-test loop; a swarm stays below 10', async () => {
+  // (Over 25 s: a turn running longer climbs a level each 30 s on purpose.)
+  const turn = (spark: boolean) =>
+    simulate(25, (h, t) => {
+      const c = t % 3
+      if (c < 0.035) {
+        h.modelStep('high')
+        if (spark) h.usedTool()
+        h.toolsInFlight = 1
+      }
+      if (Math.abs(c - 1) < 0.035) h.toolsInFlight = 0
+    })
+  const loop = simulate(25, (h, t) => {
+    const c = t % 7
+    if (c < 0.035) {
+      h.modelStep('high')
+      h.edited(30)
+    }
+    if (Math.abs(c - 1) < 0.035) {
+      h.ranCommand()
+      h.toolsInFlight = 1
+    }
+    if (Math.abs(c - 6) < 0.035) h.toolsInFlight = 0
+  })
+  // A browser driven over MCP, a call a second, still sits below the edit-test loop.
+  const busy = simulate(25, (h, t) => {
+    if (tickOf(t, 1)) {
+      h.modelStep('high')
+      h.usedTool()
+    }
+  })
+  expect(turn(true).max).toBeGreaterThan(turn(false).max)
+  expect(turn(true).max).toBeLessThan(loop.max)
+  expect(busy.max).toBeLessThan(loop.max)
+  const swarm = simulate(25, (h, t) => {
+    h.runningAgents = 4
+    for (let a = 0; a < 4; a++) {
+      if (tickOf(t + a * 0.5, 2)) {
+        h.usedTool(true)
+        h.modelStep('low', true)
+      }
+    }
+  })
+  expect(swarm.at10).toBeLessThan(0.1)
 })
 
 test('calibration: a blocked tool keeps a low burn; a burst cools back to idle', async () => {
@@ -698,6 +749,59 @@ test('tips: the other scenes once, while it is still the fire; the sound three c
   expect(readTips({ scenesTold: 'yes', since: -1, soundTold: true })).toEqual({ soundTold: true })
 })
 
+test('tips: someone who had Flow before tips were kept is taken as told; someone new starts on them', () => {
+  const tipsOver = (t: ReturnType<typeof firstTips>, cfg = readConfig({})) => {
+    const said: string[] = []
+    for (let i = 0; i < 8; i++) {
+      const r = nextTip(t, cfg)
+      if (r.tip) said.push(r.tip)
+      t = r.tips
+    }
+    return said
+  }
+  expect(firstTips(false, readConfig({}))).toEqual({})
+  expect(tipsOver(firstTips(false, readConfig({})))).toHaveLength(2) // the scenes, then the sound
+  // Flow's state from before, or any setting changed (the sound tried and turned off again leaves `off`, the default).
+  expect(tipsOver(firstTips(true, readConfig({})))).toEqual([])
+  for (const changed of [{ style: 'surf' }, { level: 5 }, { idle: 'dark' }, { mode: 'manual' }, { layout: 'spine' }, { time: 'night' }]) {
+    expect(tipsOver(firstTips(false, readConfig(changed)))).toEqual([])
+  }
+})
+
+test('tips: an existing user (Flow state in the store, no tips kept yet) is never told, at the start or under /flow', async ($, on) => {
+  mock.clock(on)
+  mock.store(on, { overrides: { sound: 'off' } }) // a session that ended without writing it through
+  const seen = engine(on)
+  await start($)
+  expect(seen.toasts ?? []).toEqual([])
+  for (let i = 0; i < 6; i++) expect(await flow($, '')).not.toContain('flow:')
+})
+
+test("tips: someone new who picks a scene before any tip, then reloads, is still new: the sound tip comes", async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const quietStart = () =>
+    ($ as unknown as { session: { start: (a: object) => Promise<unknown> } }).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: false })
+  await quietStart() // no prompt to toast over
+  expect(await flow($, 'surf')).not.toContain('flow:') // (a scene found: no scenes tip)
+  await start($) // a reload: the overrides it stored are this user's own, not from before
+  expect(seen.toasts ?? []).toEqual([])
+  expect(await flow($, '')).not.toContain('flow:')
+  expect(await flow($, '')).toContain('`/flow sound` turns it on')
+})
+
+test('tips: the sound on at a start with no prompt (set in /config) still counts as tried once it is off again', { options: { sound: 'on' } }, async ($, on) => {
+  mock.clock(on)
+  mock.store(on, { tips: {} }) // someone new, tips kept
+  engine(on)
+  await ($ as unknown as { session: { start: (a: object) => Promise<unknown> } }).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: false })
+  const said = [await flow($, 'sound off')]
+  for (let i = 0; i < 5; i++) said.push(await flow($, ''))
+  expect(said.filter(s => s.includes('steps through them'))).toHaveLength(1)
+  expect(said.filter(s => s.includes('`/flow sound` turns it on'))).toHaveLength(0)
+})
+
 test('tips: starting on the fire shows the scenes tip once, as a toast', async ($, on) => {
   mock.clock(on)
   mock.store(on)
@@ -733,6 +837,27 @@ test('/flow sound toggles it: on, the soundscape plays; off again, it stops at o
   expect(await flow($, 'sound')).toContain('sound off')
   await clock.advance(5000)
   expect((seen.plays ?? []).length).toBe(playing)
+  await ui.unmount()
+})
+
+test('the session ending stops the soundscape for good (Claude Code quitting leaves nothing playing); after a /clear it plays on', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(3000)
+  const plays = () => (seen.plays ?? []).length
+  // A /clear: the process goes on under another id, and so does the sound.
+  await endSession($, 'clear', 'session-a')
+  let before = plays()
+  await clock.advance(3000)
+  expect(plays()).toBeGreaterThan(before)
+  // Quitting: the frames still running till the process goes start nothing (a clip begun now outlives it).
+  await endSession($, 'prompt_input_exit', 'session-a')
+  before = plays()
+  await clock.advance(5000)
+  expect(plays()).toBe(before)
   await ui.unmount()
 })
 
@@ -819,6 +944,43 @@ test('config values are validated, falling back to defaults', async () => {
   expect(readConfig({ level: 42 }).level).toBe(8)
 })
 
+test('/config rows left on a scene since renamed or dropped read as the one meant, to be written back', () => {
+  const style = { key: 'flow.style', options: STYLES }
+  expect(staleRows([{ ...style, value: 'colony' }], 'flow')).toEqual([{ key: 'flow.style', field: 'style', from: 'colony', to: 'avalon' }])
+  expect(staleRows([{ ...style, value: 'ocean' }], 'flow')[0]?.to).toBe('surf')
+  expect(staleRows([{ ...style, value: 'river' }], 'flow')[0]?.to).toBe('fire') // dropped: the default
+  expect(staleRows([{ ...style, value: 'lava' }], 'flow')[0]?.to).toBe('fire')
+  expect(staleRows([{ key: 'flow.idle', value: 'pilot', options: ['glow', 'dark'] }], 'flow')[0]?.to).toBe('glow')
+  // Every old name and alias stands for a scene of today's.
+  for (const d of SCENES) {
+    for (const a of d.aliases ?? []) expect(staleRows([{ ...style, value: a }], 'flow')[0]?.to).toBe(d.name)
+  }
+  // A row already right, another plugin's, the panel's own, one with no options: left alone.
+  const rows = [
+    { ...style, value: 'surf' },
+    { key: 'other.style', value: 'colony', options: ['a', 'b'] },
+    { key: 'theme', value: 'colony', options: ['light', 'dark'] },
+    { key: 'flow.level', value: 3 },
+  ]
+  expect(staleRows(rows, 'flow')).toEqual([])
+})
+
+test('a /config row left on an old scene (colony) is written back as avalon at the start, said in the debug log alone', { options: { style: 'colony' } }, async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  // Claude Code reads the stored `colony` as the default (fire) before Flow loads; /config's row still holds it.
+  const row = { key: 'flow.style', label: 'Scene', kind: 'choice', value: 'colony', options: [...STYLES], provider: { plugin: 'flow', tier: 'user' }, isLocked: false }
+  on('config.list', () => ({ value: [row] as never }))
+  await start($)
+  expect(seen.config).toEqual([['flow.style', 'avalon']])
+  expect((await flow($)).split('\n')[0]).toContain('avalon')
+  const said = (seen.logs ?? []).filter(l => l.text.includes('colony'))
+  expect(said).toHaveLength(1)
+  expect(said[0]!.to).toBe('debug')
+  expect((seen.toasts ?? []).some(t => t.includes('colony'))).toBe(false)
+})
+
 test('settings arrive from /config', { options: { mode: 'manual', style: 'surf', level: 3 } }, async ($, on) => {
   mock.clock(on)
   mock.store(on)
@@ -875,6 +1037,19 @@ test('a big write lifts the scene; a failed command shows smoke', async ($, on) 
   isError = true
   await $.tool.call({ tool: 'Bash', command: 'false' } as never)
   expect(await flow($)).toContain('after a failure')
+})
+
+test('an MCP tool (or any other) sparks the scene; a question put to the person does not', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  on('tool.call', () => ({ result: {} as never }))
+  await start($)
+  expect(await flow($)).toContain('now 1/10') // idle: a low glow
+  await $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  expect(await flow($)).toContain('now 1/10')
+  await $.tool.call({ tool: 'mcp__github__create_issue', title: 'x' } as never)
+  expect(await flow($)).toContain('now 2/10') // 1 + a read's spark
 })
 
 test('a precompute pass is not a compaction: no smoke', async ($, on) => {
