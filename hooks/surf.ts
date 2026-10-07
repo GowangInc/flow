@@ -1,4 +1,4 @@
-// REVISION: flow-v111-held
+// REVISION: flow-v120-shared-noise
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -24,7 +24,7 @@
 import { Cells, Rng, isTall } from './cells'
 import type { Tint } from './styles'
 import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
-import { BRAILLE, clamp, fitQuad, g, hash1 as hash, mix, QUAD, type QuadFit } from './pixels'
+import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, noise1 as vnoise, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
 
@@ -156,20 +156,6 @@ type Pose = keyof typeof SPRITES
 const PMAX = 480
 /** Set pixels in each quadrant mask. */
 const BITS = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
-
-function grey(c: number, k: number): number {
-  const l = (((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11) | 0
-  return mix(c, (l << 16) | (l << 8) | l, k)
-}
-
-/** Smooth 1-D value noise in [0, 1). */
-function vnoise(x: number, seed: number): number {
-  const i = Math.floor(x)
-  const f = x - i
-  const a = hash(i * 7919 + seed)
-  const b = hash((i + 1) * 7919 + seed)
-  return a + (b - a) * f * f * (3 - 2 * f)
-}
 
 export class Surf {
   strength = 8
