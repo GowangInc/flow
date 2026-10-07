@@ -1,0 +1,73 @@
+# The plugin's manifests and hooks module, its types, its tests (with Claude Code's
+# engine) and the scene checks, on every pull request and every push to main.
+# Nothing here needs a Claude login or an API key, and the sounds aren't rebuilt
+# (that needs sox and ffmpeg): `npm run check` only checks hooks/sound-files.ts
+# against sounds/.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The Claude Code to test against: latest follows its releases (the mod API
+      # is early access and changes); set a version, e.g. 2.1.293, to hold one.
+      CLAUDE_CODE_VERSION: latest
+      DISABLE_AUTOUPDATER: '1'
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Claude Code
+        run: |
+          npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+          claude --version
+
+      - name: Validate the plugin
+        run: claude plugin validate --strict .
+
+      # tsconfig.json extends .claude-plugin/types/tsconfig.json, which Claude Code
+      # writes (gitignored) with the mod API's types whenever it loads the mod.
+      # Not logged in, `claude -p` loads it, writes them and stops at "Not logged in".
+      - name: Write the mod API's types
+        run: |
+          timeout 120 claude --plugin-dir . -p 'load the plugin' < /dev/null || true
+          if [ ! -f .claude-plugin/types/tsconfig.json ]; then
+            echo "::error::Claude Code didn't write .claude-plugin/types/"
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: claude plugin test .
+
+      # A shared runner is slower and noisier than a laptop: hold scenes to 6 ms a
+      # frame here, so only one far over the 2 ms budget fails.
+      - name: Scene checks
+        run: npm run check
+        env:
+          FLOW_MAX_MS: '6'

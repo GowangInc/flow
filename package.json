@@ -23,10 +23,13 @@
     "new-scene": "tsx scripts/new-scene.ts",
     "preview": "tsx scripts/preview.ts",
     "check": "tsx scripts/check.ts",
+    "typecheck": "tsc -p . && tsc -p tsconfig.node.json",
     "sync": "tsx scripts/sync-manifest.ts",
     "sounds": "tsx scripts/make-sounds.ts"
   },
   "devDependencies": {
-    "tsx": "^4.19.0"
+    "@types/node": "^24.19.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3"
   }
 }
