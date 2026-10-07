@@ -1,8 +1,11 @@
-// REVISION: flow-v105-tips
+// REVISION: flow-v120-per-session
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
 // `flow:` prefix: Claude Code adds the plugin's name itself; pi's adapter adds it.
+// `/flow` changes only the session it runs in; `/flow save` makes the
+// session's settings the default new sessions start with, and `/flow reset`
+// puts a session back on it (sessions.ts keeps each session's own).
 
 import { hasNight, nextStyle, STYLES, styleNamed, type SceneName } from './styles'
 
@@ -86,10 +89,15 @@ export type FlowCommand =
   | { kind: 'time'; time: FlowTime }
   /** Sound on or off; none given toggles it. */
   | { kind: 'sound'; sound?: FlowSound }
+  /** Make this session's settings the default new sessions start with. */
+  | { kind: 'save' }
+  /** Put this session back on the default. */
+  | { kind: 'reset' }
   | { kind: 'error'; text: string }
 
 const SCENES = STYLES.join(', ')
 const USAGE = '! `/flow help` lists what it takes; `/flow next` cycles the scenes'
+const DEFAULT_USAGE = "! `/flow save` makes this session's settings your default; `/flow reset` puts this session back on it"
 
 const TIMES = new Map<string, FlowTime>([
   ['day', 'day'],
@@ -137,6 +145,10 @@ export function parseFlowArgs(args: string): FlowCommand {
     return { kind: 'error', text: USAGE }
   }
   if (a === 'help' || a === 'list' || a === '?') return { kind: 'help' }
+  if (a === 'save') return { kind: 'save' }
+  if (a === 'reset') return { kind: 'reset' }
+  // (Either could be meant: say which is which.)
+  if (a === 'default' || a === 'defaults') return { kind: 'error', text: DEFAULT_USAGE }
   if (a === 'auto' || a === 'on') return { kind: 'auto' }
   if (a === 'next' || a === 'style') return { kind: 'style' }
   const layout = LAYOUTS.get(a)
@@ -172,8 +184,43 @@ const TINTS: Record<string, string> = { smoke: 'after a failure', blue: 'context
 
 const BACK_TO_AUTO = '`/flow auto` to follow the work again'
 
-/** `/flow` with no arguments: the scene, the mode and level now, any tint, the time of day. */
-export function statusText(cfg: FlowConfig, levelNow: number, tint: string, clock: Clock): string {
+/** The mode and its level, as a person thinks of them: `auto`, `off` or `holding 5/10`. */
+const modeText = (cfg: FlowConfig) => (cfg.mode === 'auto' ? 'auto' : cfg.level === 0 ? 'off' : `holding ${label(cfg.level)}`)
+
+/** The settings as a person thinks of them (the mode carries its level), in the status line's order. */
+type Item = 'style' | 'mode' | 'idle' | 'time' | 'layout' | 'sound'
+const ITEMS: readonly Item[] = ['style', 'mode', 'idle', 'time', 'layout', 'sound']
+
+function itemText(cfg: FlowConfig, item: Item): string {
+  switch (item) {
+    case 'style':
+      return cfg.style
+    case 'mode':
+      return modeText(cfg)
+    case 'idle':
+      return `idle ${cfg.idle === 0 ? 'dark' : 'glow'}`
+    case 'time':
+      return cfg.time === 'clock' ? 'day and night by the clock' : cfg.time
+    case 'layout':
+      return cfg.layout
+    case 'sound':
+      return `sound ${cfg.sound}`
+  }
+}
+
+/** Where two sets of settings differ, as a person would notice (a manual level held in auto mode doesn't show). */
+function differingItems(a: FlowConfig, b: FlowConfig): Item[] {
+  return ITEMS.filter(i => itemText(a, i) !== itemText(b, i))
+}
+
+const inWords = (cfg: FlowConfig, items: readonly Item[]) => items.map(i => itemText(cfg, i)).join(', ')
+
+/**
+ * `/flow` with no arguments: the scene, the mode and level now, any tint, the
+ * time of day; then, where this session's settings differ from the default
+ * (`defaults`, what new sessions start with), what the default has instead.
+ */
+export function statusText(cfg: FlowConfig, levelNow: number, tint: string, clock: Clock, defaults?: FlowConfig): string {
   const parts = [`${cfg.style}`]
   parts.push(
     cfg.mode === 'auto'
@@ -187,13 +234,45 @@ export function statusText(cfg: FlowConfig, levelNow: number, tint: string, cloc
   else if (cfg.time !== 'clock') parts.push(`${cfg.time} pinned (${cfg.style} has no night)`)
   if (cfg.layout === 'spine') parts.push('spine')
   if (cfg.sound === 'on') parts.push('sound on')
-  return `${parts.join(', ')}\nscenes: ${SCENES} · \`/flow next\` for another · \`/flow help\``
+  const lines = [parts.join(', ')]
+  const own = defaults ? differingItems(cfg, defaults) : []
+  if (defaults && own.length) {
+    lines.push(`just this session (your default: ${inWords(defaults, own)}) · \`/flow save\` makes this the default · \`/flow reset\` goes back`)
+  }
+  lines.push(`scenes: ${SCENES} · \`/flow next\` for another · \`/flow help\``)
+  return lines.join('\n')
+}
+
+/**
+ * Under the reply to a change that first sets this session apart from the
+ * default: that it's this session's alone, and how to make it the default.
+ */
+export function ownHint(before: FlowConfig, after: FlowConfig, defaults: FlowConfig): string {
+  const first = !differingItems(before, defaults).length && differingItems(after, defaults).length > 0
+  return first ? '\njust this session · `/flow save` makes it your default for new sessions' : ''
+}
+
+/**
+ * What `/flow save` answers: `before` the default it replaced, `saved`
+ * whether anything was written, `refused` the fields /config would not take.
+ */
+export function savedText(cfg: FlowConfig, before: FlowConfig, saved: boolean, refused: readonly (keyof FlowConfig)[] = []): string {
+  const notSaved = refused.length ? `  (not saved: /config refused ${refused.join(', ')})` : ''
+  if (!saved) return refused.length ? `not saved: /config refused ${refused.join(', ')}` : 'already your default: new sessions start this way'
+  const items = differingItems(cfg, before)
+  return `saved as your default: new sessions start with ${items.length ? inWords(cfg, items) : 'these settings'}${notSaved}`
+}
+
+/** What `/flow reset` answers: `before` the session's settings, `defaults` what it's back on. */
+export function resetText(before: FlowConfig, defaults: FlowConfig): string {
+  const items = differingItems(before, defaults)
+  return items.length ? `back to your default: ${inWords(defaults, items)}` : 'already on your default'
 }
 
 /** `/flow help`: everything it takes (`panes`: whether the harness has the spine). */
 export function helpText(agent = "Claude's", panes = true): string {
   const lines = [
-    'ambient scenes that move with the work',
+    'ambient scenes that move with the work; each session keeps its own settings',
     `  /flow <name>          pick a scene: ${SCENES}`,
     '  /flow next            the next scene',
     `  /flow day | night     pin the time of day (${STYLES.filter(hasNight).join(', ')})`,
@@ -208,6 +287,8 @@ export function helpText(agent = "Claude's", panes = true): string {
     lines.push('  /flow band | spine    above the prompt, or a tall pane beside the transcript')
     lines.push('                        (also horizontal, bar or flat; portrait, vertical or side)')
   }
+  lines.push("  /flow save            make this session's settings the default new sessions start with")
+  lines.push('  /flow reset           put this session back on the default')
   return lines.join('\n')
 }
 
