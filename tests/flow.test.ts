@@ -1,4 +1,4 @@
-// REVISION: flow-v122-ci
+// REVISION: flow-v123-train
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -14,6 +14,7 @@ import type { PiSessionEntry } from '../pi/types'
 import { Balloon, skyColor } from '../hooks/balloon'
 import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
+import { Train } from '../hooks/train'
 import { makeScene, nextStyle, SCENES, STYLES, styleNamed } from '../hooks/styles'
 import { migrateOverrides, openSession, runScene, type SceneCtx } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
@@ -1904,4 +1905,51 @@ test('avalon: each strike is sent ahead of its flash by the player start-up time
   const want = PLAYER_LEAD_MS / 70
   for (const l of leads) expect(l >= 0 && l <= Math.ceil(want) + 1).toBe(true)
   expect(leads.filter(l => Math.abs(l - want) <= 1.5).length).toBeGreaterThan(leads.length * 0.8)
+})
+
+test('train: waits at a red signal at 1; when the work starts the horn sounds and it pulls away; its wheels clack faster the faster it runs; idle again, it pulls up', () => {
+  const t = makeScene('train', 3) as Train
+  const heard = (frames: number, level: number) => {
+    t.strength = level
+    const kinds: string[] = []
+    for (let i = 0; i < frames; i++) {
+      t.step()
+      kinds.push(...t.sounds.map(e => e.kind))
+      t.sounds.length = 0
+    }
+    return kinds
+  }
+  t.ensure(120, 5)
+  heard(60, 1)
+  expect(t.standing).toBe(true)
+  expect(heard(40, 5)).toContain('horn')
+  expect(t.standing).toBe(false)
+  // Up to speed, then a minute's clacks at each.
+  heard(400, 3)
+  const slow = heard(800, 3).filter(k => k === 'clack').length
+  heard(400, 9)
+  const fast = heard(800, 9).filter(k => k === 'clack').length
+  expect(slow).toBeGreaterThan(5)
+  expect(fast).toBeGreaterThan(slow * 3)
+  // The work done, it slows and comes to a stand, and stays there.
+  heard(3000, 1)
+  expect(t.standing).toBe(true)
+  expect(t.speed).toBe(0)
+})
+
+test('train: subagents run alongside, drawing up from out of sight, and fall back out of it when they finish', () => {
+  for (const [columns, rows] of [[160, 5], [22, 60]] as const) {
+    const t = makeScene('train', 4) as Train
+    t.strength = 6
+    t.ensure(columns, rows)
+    for (let i = 0; i < 20; i++) t.step()
+    t.coverageBoost = 30
+    for (let i = 0; i < 4; i++) t.step()
+    expect(t.company).toBe(0) // still out of sight: nothing pops in
+    for (let i = 0; i < 600; i++) t.step()
+    expect(t.company).toBe(2)
+    t.coverageBoost = 0
+    for (let i = 0; i < 600; i++) t.step()
+    expect(t.company).toBe(0)
+  }
 })
