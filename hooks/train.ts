@@ -1,4 +1,4 @@
-// REVISION: flow-v1-train
+// REVISION: flow-v120-train
 //
 // Train (the `train` scene): a passenger train through the countryside on
 // the same dials as the fire; the level is its speed. At 1 it waits at a red
@@ -372,7 +372,7 @@ const q = (k: number, n: number) => Math.round(clamp(k) * n) / n
 
 type Comp = { off: number; livery: number; leaving: boolean; ph: number }
 /** A puff of exhaust: black smoke (a failure), or the faint haze of the diesel idling (`wisp`). */
-type Puff = { s: number; up: number; side: number; r: number; life: number; vu: number; vs: number; wisp: boolean }
+type Puff = { s: number; up: number; side: number; r: number; life: number; vu: number; vs: number; wisp: boolean; shade: number }
 /** Birds crossing the sky (by day, in the band): a few, flapping out of step. */
 type Flock = { x: number; y: number; vx: number; n: number; ph: number }
 type Motor = { x: number; dir: number; v: number; color: number }
@@ -700,10 +700,11 @@ export class Train extends PixelScene {
           vu: (0.06 + this.rand() * 0.08) / (1 + this.v * 0.5),
           vs: 0.03 + this.rand() * 0.06,
           wisp: false,
+          shade: this.rand(),
         })
     } else if (this.v < 1 && this.rand() < 0.12 * dt && this.puffs.length < 40) {
       // Idling or pulling gently: the faintest haze off the exhaust.
-      this.puffs.push({ s: this.pos - 14.5, up: 0, side: 0, r: 0.6, life: 0.6, vu: 0.08 + this.rand() * 0.05, vs: 0.02, wisp: true })
+      this.puffs.push({ s: this.pos - 14.5, up: 0, side: 0, r: 0.6, life: 0.6, vu: 0.08 + this.rand() * 0.05, vs: 0.02, wisp: true, shade: 0 })
     }
     let live = 0
     for (const p of this.puffs) {
@@ -1263,23 +1264,25 @@ export class Train extends PixelScene {
 
   /** Smoke from the exhaust, side-on: dark puffs streaming back and up, thinning into the sky. */
   private smokeSide(px: Painter, P: Pal, yRoof: number): void {
+    for (const p of this.puffs) this.puff(px, P, p, this.noseX - 1 + (p.s - this.pos), yRoof - 0.5 - p.up, p.r, p.r * 0.5 + 0.3)
+  }
+
+  /** One puff: an ellipse, soft at its edge, billowing in a few shades of soot (or the idle haze). */
+  private puff(px: Painter, P: Pal, p: Puff, cx: number, cy: number, r: number, ry: number): void {
     const W = px.w
     const buf = px.px
-    for (const p of this.puffs) {
-      const cx = this.noseX - 1 + (p.s - this.pos)
-      const cy = yRoof - 0.5 - p.up
-      const r = p.r
-      const ry = r * 0.5 + 0.3
-      const a = q(p.life * (p.wisp ? 0.4 : 0.95), 4)
-      if (a <= 0) continue
-      for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(px.h - 1, Math.ceil(cy + ry)); y++)
-        for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(W - 1, Math.ceil(cx + r)); x++) {
-          const dx = (x + 0.5 - cx) / r
-          const dy = (y + 0.5 - cy) / ry
-          if (dx * dx + dy * dy > 1) continue
-          buf[y * W + x] = mix(buf[y * W + x]!, p.wisp ? P.haze : P.soot, a)
-        }
-    }
+    const a = p.life * (p.wisp ? 0.4 : 0.95)
+    if (a < 0.05) return
+    const c = p.wisp ? P.haze : mix(P.soot, P.haze, q(p.shade * 0.45, 3))
+    for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(px.h - 1, Math.ceil(cy + ry)); y++)
+      for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(W - 1, Math.ceil(cx + r)); x++) {
+        const dx = (x + 0.5 - cx) / r
+        const dy = (y + 0.5 - cy) / ry
+        const d2 = dx * dx + dy * dy
+        if (d2 > 1) continue
+        const k = q(a * Math.min(1, (1 - d2) * 2.5), 4)
+        if (k > 0) buf[y * W + x] = mix(buf[y * W + x]!, c, k)
+      }
   }
 
   /** Rain driving past (a storm): short slanting streaks, slanting more the faster it runs; past the trains, not over them. */
@@ -1431,11 +1434,11 @@ export class Train extends PixelScene {
     }
     // The headlight's beam up the line (by night, in a storm).
     if (light > 0) {
-      for (let dy = 1; dy <= 22; dy++) {
+      for (let dy = 1; dy <= 16; dy++) {
         const y = ny - dy
         if (y < 0) break
-        const half = 1 + dy * 0.22
-        const k = Math.pow(1 - dy / 23, 1.6) * 0.45 * light
+        const half = 1 + dy * 0.2
+        const k = Math.pow(1 - dy / 17, 1.5) * 0.32 * light
         for (let x = Math.floor(tx - 0.5 - half); x <= Math.ceil(tx - 0.5 + half); x++) {
           if (x < 0 || x >= W) continue
           const a = q(k * clamp(half + 0.5 - Math.abs(x + 0.5 - tx)), 5)
@@ -1606,23 +1609,9 @@ export class Train extends PixelScene {
 
   /** Smoke from above: dark puffs left behind the loco, drifting on the wind, swelling as they rise. */
   private smokeAbove(px: Painter, P: Pal): void {
-    const W = px.w
-    const H = px.h
-    const buf = px.px
     for (const p of this.puffs) {
-      const cx = this.tx - 0.5 + p.side * 2
-      const cy = this.noseY + (this.pos - p.s) / 3
       const r = p.r * (0.8 + p.up * 0.12)
-      const ry = r * 0.55
-      const a = q(p.life * (p.wisp ? 0.4 : 0.95), 4)
-      if (a <= 0) continue
-      for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(H - 1, Math.ceil(cy + ry)); y++)
-        for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(W - 1, Math.ceil(cx + r)); x++) {
-          const dx = (x + 0.5 - cx) / r
-          const dy = (y + 0.5 - cy) / ry
-          if (dx * dx + dy * dy > 1) continue
-          buf[y * W + x] = mix(buf[y * W + x]!, p.wisp ? P.haze : P.soot, a)
-        }
+      this.puff(px, P, p, this.tx - 0.5 + p.side * 2, this.noseY + (this.pos - p.s) / 3, r, r * 0.55)
     }
   }
 }
