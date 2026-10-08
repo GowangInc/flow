@@ -1,0 +1,12 @@
+id = "shared.flow"
+name = "Flow"
+version = "0.1.0"
+min_herdr_version = "0.9.1"
+description = "A Flow ambient scene strip driven by Herdr pane activity"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "open"
+title = "Open Flow bottom strip"
+contexts = ["workspace"]
+command = ["sh", "open-flow.sh"]

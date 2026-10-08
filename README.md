@@ -1,8 +1,8 @@
-# flow-omp
+# flow
 
-[![CI](https://github.com/GowangInc/flow-omp/actions/workflows/ci.yml/badge.svg)](https://github.com/GowangInc/flow-omp/actions/workflows/ci.yml)
+[![CI](https://github.com/GowangInc/flow/actions/workflows/ci.yml/badge.svg)](https://github.com/GowangInc/flow/actions/workflows/ci.yml)
 
-An [MIT-licensed fork of Rob Macrae's Flow](https://github.com/robdmac/flow), adapted for OMP while retaining its pi extension and Claude Code mod.
+An [MIT-licensed fork of Rob Macrae's Flow](https://github.com/robdmac/flow), adapted for OMP and Herdr while retaining its pi extension and Claude Code mod.
 
 <img width="1200" height="384" alt="Flow's fire above the prompt: pilot lights at idle, climbing with each of Claude's tool calls, an inferno with three subagents, then back down when Claude is done" src="https://github.com/user-attachments/assets/0f0120cc-af23-44ec-9398-309cccd42764" />
 
@@ -17,10 +17,19 @@ https://github.com/user-attachments/assets/66673edf-7a52-43c3-b52b-3a804068bc5e
 **OMP**, from your shell:
 
 ```sh
-omp plugin install github:GowangInc/flow-omp
+omp plugin install github:GowangInc/flow
 ```
 
 Start a new OMP session after installing. To try the checkout without installing: `omp -e ./pi/index.ts` from the repository root.
+
+**Herdr**, from a Herdr pane in the target workspace:
+
+```sh
+herdr plugin install GowangInc/flow
+herdr plugin action invoke shared.flow.open
+```
+
+This splits the workspace bottom with a small `Flow` pane and starts the scene monitor. Click or focus the `Flow` pane before pressing keys. Controls are `n` (next scene), `a` (toggle auto/manual), `0`-`9` (manual level), and `q` (close pane).
 
 **Claude Code**, from inside a session:
 
