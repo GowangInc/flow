@@ -38,4 +38,15 @@ state = update([
 ]);
 assert.equal(state.activeCount, 0);
 assert.equal(activity.isWorking, false);
+
+for (let i = 0; i < 10; i++) {
+  state = update([
+    { pane_id: "flow", agent: "flow", agent_status: "working" },
+    { pane_id: "main", agent: "omp", agent_status: "idle" },
+  ]);
+  activity.tick(1);
+}
+assert.ok(activity.heat < 0.5, "idle polling must cool below glow threshold without phantom work");
+assert.equal(activity.isGlowing, false);
+
 console.log("selftest: Herdr pane activity maps to Flow states");
