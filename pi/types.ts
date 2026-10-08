@@ -1,8 +1,11 @@
-// REVISION: flow-v130-omp-types
+// REVISION: flow-v131-omp-timer
 //
 // The Pi-compatible extension API surface shared by pi and OMP. OMP adds
 // an agent directory, thinking level and async task jobs; Pi omits them.
 // Session entries and appendEntry remain optional for older Pi releases.
+
+/** Opaque managed timer handle: each host shapes it (OMP/Bun: unknown; Pi: a raw timeout). */
+export type FlowTimer = unknown
 
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'auto'
 
@@ -49,6 +52,9 @@ export interface PiContext {
   getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined
   /** OMP reports background jobs here, including task subagents. */
   getAsyncJobSnapshot?(): { running: readonly { type: string }[] } | null
+  /** OMP contains timer callback failures and clears handles on shutdown. */
+  setTimeout?(callback: () => void, ms: number): FlowTimer
+  clearTimer?(timer: FlowTimer): void
   sessionManager?: PiSessionManager
 }
 

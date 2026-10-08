@@ -1,4 +1,4 @@
-// REVISION: flow-v130-omp-adapter
+// REVISION: flow-v131-omp-timer
 //
 // Flow for pi and OMP: the shared scenes in a widget above the editor.
 // Agent, stream and tool events drive the activity model; OMP also reports
@@ -84,7 +84,12 @@ export default function flow(pi: PiApi) {
   let width = 0
   let lines: string[] = []
   let isMounted = false
-  let timer: ReturnType<typeof setTimeout> | undefined
+  /** The raw timer (Pi's fallback path); kept apart from the managed handle so each clears its own. */
+  let rawTimer: ReturnType<typeof setTimeout> | undefined
+  /** The OMP-style managed handle when this frame's schedule went through ctx.setTimeout. */
+  let managedTimer: PiContext | undefined
+  /** The managed frame's handle as the scheduling context returned it, cleared via its own clearTimer. */
+  let managedHandle: unknown
   let sinceContext = 0
   let sinceDefaults = 0
   let sinceJobs = 0
@@ -166,12 +171,21 @@ export default function flow(pi: PiApi) {
       tui.requestRender()
     }
     const pace = driver.pace()
-    timer = setTimeout(() => frame(pace), pace)
+    const isManaged = Boolean(ctx?.setTimeout && ctx.clearTimer)
+    managedTimer = isManaged ? ctx : undefined
+    if (isManaged) {
+      managedHandle = ctx!.setTimeout!(() => frame(pace), pace)
+    } else {
+      rawTimer = setTimeout(() => frame(pace), pace)
+    }
   }
 
   const stop = () => {
-    if (timer) clearTimeout(timer)
-    timer = undefined
+    if (managedTimer?.clearTimer) managedTimer.clearTimer(managedHandle)
+    clearTimeout(rawTimer)
+    rawTimer = undefined
+    managedTimer = undefined
+    managedHandle = undefined
   }
 
   pi.on('session_start', async (_e, ctx) => {
