@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Flow: ambient terminal scenes that move with a coding agent's work. One codebase runs as a Claude Code mod (a plugin of function hooks, early access) and as a [pi](https://github.com/badlogic/pi-mono) extension. This repo is both the plugin and its own marketplace. User-facing docs are in `README.md`; this file is for working on the code.
+Flow: ambient terminal scenes that move with a coding agent's work. This fork also runs in OMP, using the Pi-compatible extension, alongside the original [pi](https://github.com/badlogic/pi-mono) extension and Claude Code mod (early-access function hooks). User-facing docs are in `README.md`; this file is for working on the code.
 
 ## Layout
 
@@ -30,13 +30,13 @@ hooks/
   <scene>.ts         one file per scene: starfield (warp), colony, balloon + sky + clouds/,
                      engine, rocket (falcon, starship), surf, ski, bubbles, train
 pi/
-  index.ts           pi adapter (widget above the editor, /flow, ~/.pi/agent/flow.json)
+  index.ts           pi/OMP adapter (widget, /flow, host-specific flow.json defaults)
   session.ts         pi's settings for a session: flow.json's defaults and the session's own (pure)
   ansi.ts mapping.ts types.ts
 sounds/              the soundscapes' clips (AAC), built by scripts/make-sounds.ts
 scripts/             Node tools, not part of the mod: new-scene, preview, check, cvd-check, sync-manifest, make-sounds
 tests/flow.test.ts   unit tests, plus some that need the mod engine
-package.json         the pi package ("pi": { "extensions": ["./pi/index.ts"] }) and the scripts
+package.json         both omp and pi extensions point to pi/index.ts; also holds the scripts
 ```
 
 ## Scenes
@@ -94,7 +94,7 @@ The engine validates the module before it runs (`claude plugin validate .`):
 - Only a scene's own name is ever written to `/config` (Claude Code refuses a value outside a row's `options` there). A row still holding one from an older Flow (`colony` before it was `avalon`, the dropped `river` and `lava`) reads as its default to Claude Code, which says so at each load before the module runs: in the debug log, or in the transcript while the session hot-reloads a plugin folder. `readDefaults` already reads it as the scene meant (`readConfig`); at `session.start` Flow also writes it back as that (`staleRows`; the default for a scene that's gone), so the warning stops. So a renamed scene keeps its old name as an alias.
 - Before this, `/flow` kept its changes in one `overrides` key shared by every session and wrote them through to `/config` at `session.end`. Any still there are written through once at `session.start` (`migrateOverrides`), the defaults now; nothing is written at `session.end` any more.
 - The balloon's altitude is in `$.state` (the session's, surviving a reload); the one-time tips stay per user, in `$.store` under `tips`.
-- pi keeps a session's own settings in the session: a `flow` custom entry (`pi.appendEntry`), read back from `getBranch()` at `session_start` and `session_tree`, so a resume or a fork brings them back. `~/.pi/agent/flow.json` holds the defaults, written by `/flow save`, and read afresh before every `/flow` and every 30 s, as in Claude Code (`pi/session.ts`). A pi without session entries keeps one set for every session in flow.json, as before.
+- pi and OMP keep a session's own settings in a `flow` custom entry (`pi.appendEntry`), read back from `getBranch()` at `session_start` and `session_tree`, so a resume or fork brings them back. `/flow save` writes defaults to `flow.json` in the host's active agent directory: normally `~/.pi/agent/` or `~/.omp/agent/` (profile-aware in OMP). Defaults are read afresh before `/flow` and every 30 s. Older pi without session entries keeps one set for every session in flow.json (`pi/session.ts`). OMP's async `task` jobs add subagent company; background shell/eval jobs do not.
 - The band and the spine's pane show only while the scene does (`SceneDriver.isShown()`): `/flow off`, or auto's dark idle between turns, gives their rows back. The pane is closed by the plugin then (so the layout stays spine; only you closing it means you'd rather have the band) and reopens with the scene.
 - `/flow` is the only command. Don't add aliases.
 - One-time tips (`nextTip` in `settings.ts`, kept in `$.store` under `tips`): at the first chance (a `/flow`, or an interactive session starting, as a toast) while it's still the fire and no other scene has been on, the other scenes; three chances later, if the sound has never been on, the sound (a session starting without a prompt is no chance, but notes what's on: `noteTips`). The record starts at `session.start` (`firstTips`), before that session's `/flow` can store anything: empty for someone new, both told for someone who had Flow before tips were kept (any other key in the store, such as a session's record or old overrides; a stale `/config` row; the balloon's altitude this session; or a `/config` row off the manifest's default).
@@ -102,6 +102,7 @@ The engine validates the module before it runs (`claude plugin validate .`):
 ## Development
 
 ```sh
+omp -e .                    # load the package extension locally in OMP
 claude --plugin-dir .        # load it, with hot reload of the source
 claude plugin validate .     # the module's rules, the manifests, the hooks
 claude plugin test .         # the tests, including those that need the engine

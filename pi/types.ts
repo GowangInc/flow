@@ -1,14 +1,10 @@
-// REVISION: flow-v120-per-session
+// REVISION: flow-v130-omp-types
 //
-// The slice of pi's extension API this adapter uses, declared structurally
-// so the mod needs no npm dependency on `@earendil-works/pi-coding-agent`.
-// Mirrors packages/coding-agent/src/core/extensions/types.ts,
-// packages/coding-agent/src/core/session-manager.ts and
-// packages/tui/src/tui.ts in badlogic/pi-mono (now earendil-works/pi). The
-// session's entries and `appendEntry` are optional: an older pi without them
-// keeps one set of settings for every session, as before.
+// The Pi-compatible extension API surface shared by pi and OMP. OMP adds
+// an agent directory, thinking level and async task jobs; Pi omits them.
+// Session entries and appendEntry remain optional for older Pi releases.
 
-export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'auto'
 
 export interface PiComponent {
   render(width: number): string[]
@@ -51,6 +47,8 @@ export interface PiContext {
   hasUI: boolean
   thinkingLevel?: PiThinkingLevel
   getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined
+  /** OMP reports background jobs here, including task subagents. */
+  getAsyncJobSnapshot?(): { running: readonly { type: string }[] } | null
   sessionManager?: PiSessionManager
 }
 
@@ -72,6 +70,10 @@ export interface PiEvents {
 }
 
 export interface PiApi {
+  /** OMP's host exports the active profile's agent directory. */
+  pi?: { getAgentDir(): string }
+  /** OMP exposes thinking level on the API rather than the event context. */
+  getThinkingLevel?(): PiThinkingLevel | undefined
   on<K extends keyof PiEvents>(event: K, handler: (event: PiEvents[K], ctx: PiContext) => unknown): void
   registerCommand(
     name: string,

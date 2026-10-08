@@ -1,29 +1,12 @@
-// REVISION: flow-v124-tool-spark
+// REVISION: flow-v130-omp-adapter
 //
-// Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
-// scenes as the Claude Code mod, in a widget above pi's editor. pi's events
-// drive the same activity model, and the shared cell grid is drawn as 24-bit
-// ANSI lines, stepped ~14 fps while busy and 8 fps when calm.
+// Flow for pi and OMP: the shared scenes in a widget above the editor.
+// Agent, stream and tool events drive the activity model; OMP also reports
+// background task jobs and its thinking level through the host API.
 //
-//   agent_start / agent_end       a turn lifts it, then it settles to idle
-//   turn_start                    a model step; ctx.thinkingLevel sets the floor
-//   message_update (deltas)       streamed text/thinking keeps it going
-//   tool_call                     edits push it, commands spark, reads and other tools flicker
-//   tool_result (isError, bash)   a failed command shows as smoke
-//   session_compact               so does a compaction
-//   ctx.getContextUsage()         a nearly-full context shows as blue
-//
-// `/flow` takes the same arguments
-// as in Claude Code, day and night following the local clock unless pinned.
-// As there, each session keeps its own settings: `/flow` changes the session
-// it runs in, kept in the session itself (a `flow` entry, never sent to the
-// model), so resuming or forking it brings them back. ~/.pi/agent/flow.json
-// holds the defaults new sessions start with (read from the old vista.json
-// or ascii-fire.json until that exists), read afresh before `/flow` compares
-// with it (another pi session may have saved); `/flow save` writes it. An
-// older pi without session entries keeps one set for every session, in that
-// file, as before (session.ts). pi has no built-in subagents, so they never add to the scene here,
-// and no side panes, so there is no spine.
+// `/flow` keeps each session's choices in its session entries. Defaults live
+// in the active host's agent directory (Pi also reads its older filenames).
+// Neither host has Flow's Claude-only audio player or side pane.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -33,21 +16,19 @@ import { Activity } from '../hooks/activity'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { changedText, changesFor, helpText, parseFlowArgs, readConfig, statusText, storedValue, type FlowConfig } from '../hooks/settings'
 import { gridToAnsi } from './ansi'
-import { COMMAND_TOOLS, effortOf, FLOW_ENTRY, piLinesWritten, READ_TOOLS } from './mapping'
+import { COMMAND_TOOLS, effortOf, FLOW_ENTRY, piLinesWritten, READ_TOOLS, runningTasks } from './mapping'
 import { PiSettings, type SessionEntries } from './session'
 import type { PiApi, PiComponent, PiContext, PiTui } from './types'
 
 const KEY = 'flow'
 const ROWS = 5
 const CONTEXT_EVERY_MS = 5000
-/** How often flow.json is read afresh while the scene runs: another session's save shows here as this one's own. */
+/** How often another session's saved defaults are read afresh. */
 const DEFAULTS_EVERY_MS = 30_000
-const SETTINGS = join(homedir(), '.pi', 'agent', 'flow.json')
-/** Where the settings lived before, newest first: as vista, then as ascii-fire. */
-const OLD_SETTINGS = [join(homedir(), '.pi', 'agent', 'vista.json'), join(homedir(), '.pi', 'agent', 'ascii-fire.json')]
+const JOBS_EVERY_MS = 500
 
-async function loadSettings(): Promise<FlowConfig> {
-  for (const file of [SETTINGS, ...OLD_SETTINGS]) {
+async function loadSettings(files: readonly string[]): Promise<FlowConfig> {
+  for (const file of files) {
     try {
       return readConfig(JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>)
     } catch {
@@ -57,15 +38,10 @@ async function loadSettings(): Promise<FlowConfig> {
   return readConfig(undefined)
 }
 
-/**
- * Write just these changes into the settings file, over what is there now:
- * another pi session's changes to other settings survive.
- */
-async function saveSettings(changes: Partial<FlowConfig>): Promise<void> {
-  // The settings so far: flow.json, or before the first save since a
-  // rename, an old file (else its settings would be dropped).
+/** Save changed fields over the latest defaults, including older Pi filenames. */
+async function saveSettings(changes: Partial<FlowConfig>, files: readonly string[]): Promise<void> {
   let stored: Record<string, unknown> = {}
-  for (const file of [SETTINGS, ...OLD_SETTINGS]) {
+  for (const file of files) {
     try {
       stored = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>
       break
@@ -76,16 +52,23 @@ async function saveSettings(changes: Partial<FlowConfig>): Promise<void> {
   for (const [k, v] of Object.entries(changes) as [keyof FlowConfig, FlowConfig[keyof FlowConfig]][]) {
     stored[k] = storedValue(k, v)
   }
-  await mkdir(dirname(SETTINGS), { recursive: true })
-  await writeFile(SETTINGS, JSON.stringify(stored, null, 2) + '\n')
+  await mkdir(dirname(files[0]!), { recursive: true })
+  await writeFile(files[0]!, JSON.stringify(stored, null, 2) + '\n')
 }
 
 export default function flow(pi: PiApi) {
   const activity = new Activity()
   const driver = new SceneDriver(readConfig(undefined), activity)
   const cfg = driver.cfg
+  const host = pi.pi ? 'OMP' : 'pi'
+  const files = pi.pi
+    ? [join(pi.pi.getAgentDir(), 'flow.json')]
+    : ['flow.json', 'vista.json', 'ascii-fire.json'].map(name => join(homedir(), '.pi', 'agent', name))
   /** The defaults (flow.json) and this session's own settings over them. */
-  const settings = new PiSettings(cfg, { load: loadSettings, save: saveSettings })
+  const settings = new PiSettings(cfg, {
+    load: () => loadSettings(files),
+    save: changes => saveSettings(changes, files),
+  })
 
   /** The session's entries, where this pi keeps them: else every session shares flow.json, as before. */
   const entriesOf = (ctx: PiContext): SessionEntries | undefined => {
@@ -104,6 +87,7 @@ export default function flow(pi: PiApi) {
   let timer: ReturnType<typeof setTimeout> | undefined
   let sinceContext = 0
   let sinceDefaults = 0
+  let sinceJobs = 0
 
   /** Read the local clock (pi runs on this machine, so its time is the person's). */
   const readClock = () => {
@@ -156,6 +140,13 @@ export default function flow(pi: PiApi) {
         if (usage?.percent != null) activity.contextPercent = usage.percent
         readClock()
       }
+      if (ctx.getAsyncJobSnapshot) {
+        sinceJobs += elapsed
+        if (sinceJobs >= JOBS_EVERY_MS) {
+          sinceJobs = 0
+          activity.runningAgents = runningTasks(ctx.getAsyncJobSnapshot()?.running ?? [])
+        }
+      }
       sinceDefaults += elapsed
       if (sinceDefaults >= DEFAULTS_EVERY_MS && !refreshing) {
         sinceDefaults = 0
@@ -186,6 +177,8 @@ export default function flow(pi: PiApi) {
   pi.on('session_start', async (_e, ctx) => {
     if (ctx.mode !== 'tui' || !ctx.hasUI) return
     ctxRef = ctx
+    activity.runningAgents = 0
+    sinceJobs = 0
     // A new session starts on the defaults; a resumed, forked or reloaded one on its own over them.
     await settings.open(entriesOf(ctx))
     width = 0
@@ -209,12 +202,13 @@ export default function flow(pi: PiApi) {
     stop()
     if (isMounted && ctx.hasUI) ctx.ui.setWidget(KEY, undefined)
     isMounted = false
+    activity.runningAgents = 0
     ctxRef = undefined
   })
 
   pi.on('agent_start', () => activity.turnStarted())
   pi.on('agent_end', () => activity.turnEnded())
-  pi.on('turn_start', (_e, ctx) => activity.modelStep(effortOf(ctx.thinkingLevel)))
+  pi.on('turn_start', (_e, ctx) => activity.modelStep(effortOf(pi.getThinkingLevel?.() ?? ctx.thinkingLevel)))
 
   pi.on('message_update', e => {
     const m = e.assistantMessageEvent
@@ -225,15 +219,15 @@ export default function flow(pi: PiApi) {
   pi.on('tool_call', e => {
     const lines = piLinesWritten(e.toolName, e.input)
     if (lines !== undefined) activity.edited(lines)
-    else if (COMMAND_TOOLS.has(e.toolName)) activity.ranCommand()
-    else if (READ_TOOLS.has(e.toolName)) activity.read()
+    else if (COMMAND_TOOLS[e.toolName]) activity.ranCommand()
+    else if (READ_TOOLS[e.toolName]) activity.read()
     else activity.usedTool() // an extension's tool: work too
     activity.toolsInFlight++
   })
 
   pi.on('tool_result', e => {
     activity.toolsInFlight = Math.max(0, activity.toolsInFlight - 1)
-    if (COMMAND_TOOLS.has(e.toolName) && e.isError) activity.failed()
+    if (COMMAND_TOOLS[e.toolName] && e.isError) activity.failed()
   })
 
   pi.on('session_compact', () => activity.compacted())
@@ -254,15 +248,19 @@ export default function flow(pi: PiApi) {
       return
     }
     if (cmd.kind === 'help') {
-      ctx.ui.notify(say(helpText("pi's", false)))
+      ctx.ui.notify(say(helpText(`${host}'s`, false, false)))
       return
     }
     if (cmd.kind === 'error') {
       ctx.ui.notify(say(cmd.text.replace(/^! /, '')), 'warning')
       return
     }
+    if (cmd.kind === 'sound') {
+      ctx.ui.notify('flow: soundscapes need Claude Code’s audio player; this extension is visual-only', 'warning')
+      return
+    }
     if (cmd.kind === 'layout') {
-      ctx.ui.notify('flow: pi has no side panes, so the scene stays in the band above the editor', 'warning')
+      ctx.ui.notify(`flow: ${host} has no side panes, so the scene stays in the band above the editor`, 'warning')
       return
     }
     if (cmd.kind === 'save') {
@@ -274,7 +272,7 @@ export default function flow(pi: PiApi) {
     if (cmd.kind === 'reset') text = settings.reset(entries)
     else {
       const note = await settings.change(changesFor(cmd, cfg) ?? {}, entries)
-      text = `${changedText(cmd, cfg, "pi's", driver.clock)}${note}`
+      text = `${changedText(cmd, cfg, `${host}'s`, driver.clock)}${note}`
     }
     width = 0 // redraw at once in the new look
     sync(ctx)

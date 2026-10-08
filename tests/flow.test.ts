@@ -1,4 +1,4 @@
-// REVISION: flow-v129-quiet-exit
+// REVISION: flow-v130-omp-tests
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -8,7 +8,7 @@ import { effortFloor, Activity, linesWritten } from '../hooks/activity'
 import { firstTips, nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
-import { effortOf, ownInSession, piLinesWritten } from '../pi/mapping'
+import { effortOf, ownInSession, piLinesWritten, runningTasks } from '../pi/mapping'
 import { PiSettings, type SessionEntries } from '../pi/session'
 import type { PiSessionEntry } from '../pi/types'
 import { Balloon, skyColor } from '../hooks/balloon'
@@ -1444,7 +1444,18 @@ test("pi: thinking levels map onto the effort floors; edits count pi's input sha
   expect(piLinesWritten('write', { path: 'a', content: 'x\ny' })).toBe(2)
   expect(piLinesWritten('edit', { path: 'a', edits: [{ oldText: 'a', newText: 'b\nc' }, { oldText: 'd', newText: 'e' }] })).toBe(3)
   expect(piLinesWritten('edit', { path: 'a', oldText: 'a', newText: 'b' })).toBe(1)
+  expect(piLinesWritten('edit', { input: '*** Begin Patch\n[foo.ts#ABCD]\nPUT 1.=1:\n+one\n++two\n*** End Patch' })).toBe(2)
   expect(piLinesWritten('bash', { command: 'ls' })).toBeUndefined()
+})
+
+test('OMP: only running task jobs add subagent company while the parent is idle', () => {
+  const activity = new Activity()
+  activity.runningAgents = runningTasks([{ type: 'task' }, { type: 'bash' }, { type: 'task' }, { type: 'eval' }])
+  expect(activity.coverageBoost).toBe(30)
+  expect(activity.strength(1)).toBe(3)
+  activity.runningAgents = runningTasks([])
+  expect(activity.coverageBoost).toBe(0)
+  expect(activity.strength(1)).toBe(1)
 })
 
 test('settings: the shared /flow grammar applies the same changes everywhere', async () => {

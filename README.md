@@ -1,16 +1,26 @@
-# flow
+# flow-omp
 
-[![CI](https://github.com/robdmac/flow/actions/workflows/ci.yml/badge.svg)](https://github.com/robdmac/flow/actions/workflows/ci.yml)
+[![CI](https://github.com/GowangInc/flow-omp/actions/workflows/ci.yml/badge.svg)](https://github.com/GowangInc/flow-omp/actions/workflows/ci.yml)
+
+An [MIT-licensed fork of Rob Macrae's Flow](https://github.com/robdmac/flow), adapted for OMP while retaining its pi extension and Claude Code mod.
 
 <img width="1200" height="384" alt="Flow's fire above the prompt: pilot lights at idle, climbing with each of Claude's tool calls, an inferno with three subagents, then back down when Claude is done" src="https://github.com/user-attachments/assets/0f0120cc-af23-44ec-9398-309cccd42764" />
 
-Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, a train through the countryside, and a colony ship behind its shield. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
+Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, a train through the countryside, and a colony ship behind its shield. They run above the prompt in OMP, pi or Claude Code (also in the Claude desktop app), or in a tall pane beside Claude Code's transcript.
 
 Each scene is drawn in 24-bit color from Unicode block, quadrant and braille characters, so several pixels share each terminal cell. In the Claude desktop app, which has no character grid to draw into, the same frames are drawn as images.
 
 https://github.com/user-attachments/assets/66673edf-7a52-43c3-b52b-3a804068bc5e
 
 ## Install
+
+**OMP**, from your shell:
+
+```sh
+omp plugin install github:GowangInc/flow-omp
+```
+
+Start a new OMP session after installing. To try the checkout without installing: `omp -e ./pi/index.ts` from the repository root.
 
 **Claude Code**, from inside a session:
 
@@ -106,14 +116,14 @@ A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Sce
 | `/flow auto` | move with the agent's work (the default) |
 | `/flow 1`–`10` / `off` | hold a fixed level, or switch it off |
 | `/flow idle glow` / `dark` | in auto mode while idle: a low glow (the default), or nothing (the band gives its rows back) |
-| `/flow sound` | toggle a soundscape for the scene, swelling with the work (macOS; off by default); `/flow sound on` / `off` to set it |
-| `/flow band` / `spine` | a 5-row band above the prompt (the default; also `horizontal`, `bar` or `flat`), or a tall pane docked beside the transcript (also `portrait`, `vertical` or `side`) |
-| `/flow save` | make this session's settings your default, the one new sessions start with (it writes them to `/config`) |
+| `/flow sound` | Claude Code only: toggle its macOS soundscape |
+| `/flow band` / `spine` | Claude Code only: a 5-row band above the prompt (the default), or a tall pane docked beside the transcript |
+| `/flow save` | make this session's settings the default for new sessions (`/config` in Claude Code, `flow.json` in OMP and pi) |
 | `/flow reset` | put this session back on your default |
 | `/flow help` | list all of this |
 
 
-## Sound
+## Sound (Claude Code only)
 
 `/flow sound` (or *Sound* in `/config`) turns on a soundscape for each scene, and turns it off again, each one tuned against real recordings so it sounds like the thing itself: a campfire's sparse, bright crackle over the soft lick of its flames (and a bonfire's roar at the top), a beach's wash and its waves breaking now and then on a calm day, often on a rough one, a steam engine's chuffs in time with its crank, water bubbling and boiling, wind gusting round a balloon and its burner roaring, skis carving through snow, a train's diesel idling at the signal, and the roar of its wheels and the wind rising as it runs (matched to recordings made in a carriage and beside the line), a rocket's roar and crackle matched to NASA's launch recordings. The colony ship and the warp drive are science fiction, so theirs are designed: the hull's hum, the shield fizzing, and a low, muffled boom through the hull as each rock blows up on it; the drive's hum climbing with speed.
 
@@ -125,21 +135,22 @@ It plays only while the scene is on screen, and stops with the session. Claude C
 
 Run `/flow off`, or `/flow idle dark` to stay in auto mode but show nothing while idle. Either applies to the session you run it in; follow it with `/flow save` to make it the default for new sessions too. You can also disable the plugin. Flow draws in the terminal and in the Claude desktop app; not in VS Code or on mobile.
 
-## pi
+## OMP and pi
 
-The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's editor, drawn as 24-bit ANSI lines. It shares the scenes, the activity model and the `/flow` command with the Claude Code version. pi has no side panes, so there is no spine there, and no built-in subagents. pi's events drive it:
+The same scenes run as a Pi-compatible extension (`pi/index.ts`): a widget above the editor, drawn as 24-bit ANSI lines. OMP and pi share the scenes, activity model and `/flow` command with Claude Code. Neither extension has Claude's side pane or audio player. `/flow spine` and `/flow sound` explain that they are unavailable rather than pretending to enable them.
 
-| pi event | The scene |
+| Host event or state | The scene |
 |---|---|
-| `agent_start` / `agent_end` | a turn lifts it (a level more for every 30 s it runs), then it settles to idle |
-| `turn_start` | rises to the floor for `ctx.thinkingLevel` (`minimal`/`low` 2 … `max` 6) |
-| `message_update` deltas | streamed text and thinking keep it going |
-| `tool_call` | `write`/`edit` push it by lines written, `bash` sparks, reads and other tools flicker |
-| `tool_result` with `isError` | a failed command shows as smoke |
-| `session_compact` | so does a compaction |
-| `ctx.getContextUsage()` | a nearly-full context shows as blue |
+| `agent_start` / `agent_end` | A turn lifts it (a level more for every 30 s it runs), then it settles to idle |
+| `turn_start` | Rises to the floor for the host's thinking level (`low` 2 … `max` 6) |
+| `message_update` deltas | Streamed text and thinking keep it going |
+| `tool_call` | `write`/`edit` push it by lines written (including OMP hashline patches), shell/eval commands spark, reads and other tools flicker |
+| OMP async task jobs | Each running `task` subagent adds company; background shell/eval jobs do not |
+| `tool_result` with `isError` | A failed command shows as smoke |
+| `session_compact` | So does a compaction |
+| `ctx.getContextUsage()` | A nearly-full context shows as blue |
 
-As in Claude Code, each session keeps its own settings, kept in the session itself (an entry the model never sees), so resuming or forking it brings them back. `~/.pi/agent/flow.json` holds the defaults new sessions start with; `/flow save` writes it. To try it without installing: `pi --extension ./pi/index.ts`.
+Each session keeps its own choices in a session entry the model never sees, so resuming or forking restores them. `/flow save` writes new-session defaults to `flow.json` in the active OMP profile's agent directory (normally `~/.omp/agent/flow.json`) or to `~/.pi/agent/flow.json` in pi. To try it without installing: `omp -e ./pi/index.ts` or `pi --extension ./pi/index.ts`.
 
 ## Cost
 
@@ -147,18 +158,19 @@ Flow repaints about 14 times a second while busy and 8 times when calm. It skips
 
 ## Compatibility
 
-Built against Claude Code 2.1.289 and pi 1.0.0. Mods (function-hook plugins) are early access: the API may change between Claude Code releases, so a newer release can break flow until it's updated.
+Tested with OMP 18.4.2. Upstream Flow was built against Claude Code 2.1.289 and pi 1.0.0. Mods (function-hook plugins) are early access: the API may change between Claude Code releases, so a newer release can break Flow until it's updated.
 
 ## Development
 
 ```sh
-claude --plugin-dir .   # load it, with hot reload (loading writes its types to .claude-plugin/types/)
+omp -e .                # load this package's OMP extension without installing
+claude --plugin-dir .   # load the Claude mod, with hot reload (writes its types to .claude-plugin/types/)
 claude plugin validate .
 claude plugin test .
-npm install && npm run typecheck
+npm ci && npm run typecheck && npm run check
 ```
 
-CI ([ci.yml](.github/workflows/ci.yml)) runs these and `npm run check` on every pull request and push to main.
+CI ([ci.yml](.github/workflows/ci.yml)) validates the Claude mod, typechecks, runs the shared tests and checks scenes on every pull request and push to main.
 
 ### Add your own scene
 

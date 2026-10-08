@@ -1,13 +1,14 @@
 {
-  "name": "flow",
+  "name": "flow-omp",
   "version": "0.7.0",
   "private": true,
-  "description": "Ambient scenes that move with your coding agent's work (a fire, bubbles, surf, rockets and more), for Claude Code and pi",
+  "description": "Ambient scenes that move with your coding agent's work, for OMP, pi and Claude Code",
   "author": "Rob Macrae",
   "license": "MIT",
-  "repository": "github:robdmac/flow",
+  "repository": "github:GowangInc/flow-omp",
   "keywords": [
     "pi-package",
+    "omp",
     "claude-code",
     "fun",
     "animation",
@@ -15,6 +16,11 @@
     "terminal-art"
   ],
   "pi": {
+    "extensions": [
+      "./pi/index.ts"
+    ]
+  },
+  "omp": {
     "extensions": [
       "./pi/index.ts"
     ]

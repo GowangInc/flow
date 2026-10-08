@@ -1,4 +1,4 @@
-// REVISION: flow-v125-note-tips
+// REVISION: flow-v130-audio-help
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -294,8 +294,8 @@ export function resetText(before: FlowConfig, defaults: FlowConfig): string {
   return items.length ? `back to your default: ${inWords(defaults, items)}` : 'already on your default'
 }
 
-/** `/flow help`: everything it takes (`panes`: whether the harness has the spine). */
-export function helpText(agent = "Claude's", panes = true): string {
+/** `/flow help`: list only capabilities this adapter can actually render. */
+export function helpText(agent = "Claude's", panes = true, audio = true): string {
   const lines = [
     'ambient scenes that move with the work; each session keeps its own settings',
     `  /flow <name>          pick a scene: ${SCENES}`,
@@ -306,8 +306,8 @@ export function helpText(agent = "Claude's", panes = true): string {
     `  /flow auto            move with ${agent} work (the default)`,
     '  /flow 1-10 | off      hold a level (10 is the busiest), or switch it off',
     '  /flow idle glow|dark  in auto mode while idle: a low glow, or nothing',
-    '  /flow sound [on|off]  a soundscape for each scene, swelling with the work (macOS); alone, toggles it',
   ]
+  if (audio) lines.push('  /flow sound [on|off]  a soundscape for each scene, swelling with the work (macOS); alone, toggles it')
   if (panes) {
     lines.push('  /flow band | spine    above the prompt, or a tall pane beside the transcript')
     lines.push('                        (also horizontal, bar or flat; portrait, vertical or side)')
